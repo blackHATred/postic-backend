@@ -75,26 +75,45 @@ func (t *Tg) Listen() error {
 		chatId = msg.Chat.ID
 		t.mu.Lock()
 		if _, ok := t.chats[chatId]; (update.Message != nil || update.EditedMessage != nil) && ok {
+			avatarURL := ""
+			/*
+				UNSAFE!
+					photos, err := t.bot.GetUserProfilePhotos(tgbotapi.UserProfilePhotosConfig{UserID: msg.From.ID, Limit: 1})
+					if err != nil {
+						fmt.Println(err) // можно проигнорировать
+					}
+					avatarURL := ""
+					if len(photos.Photos) > 0 {
+						avatarURL = photos.Photos[0][0].FileID
+						file, err := t.bot.GetFile(tgbotapi.FileConfig{FileID: avatarURL})
+						if err != nil {
+							fmt.Println(err) // можно проигнорировать
+						}
+						avatarURL = file.Link("")
+					}
+			*/
 			switch {
 			// Новое сообщение
 			case update.Message != nil:
 				t.chats[chatId] <- entity.Message{
-					Id:       1,
-					Text:     update.Message.Text,
-					Type:     "new",
-					Username: update.Message.From.UserName,
-					Time:     update.Message.Time().String(),
-					Platform: "tg",
+					Id:        1,
+					Text:      update.Message.Text,
+					Type:      "new",
+					Username:  update.Message.From.UserName,
+					Time:      update.Message.Time().String(),
+					Platform:  "tg",
+					AvatarURL: avatarURL,
 				}
 				// Обновление сообщения
 			case update.EditedMessage != nil:
 				t.chats[chatId] <- entity.Message{
-					Id:       1,
-					Text:     update.EditedMessage.Text,
-					Type:     "update",
-					Username: update.EditedMessage.From.UserName,
-					Time:     update.EditedMessage.Time().String(),
-					Platform: "tg",
+					Id:        1,
+					Text:      update.EditedMessage.Text,
+					Type:      "update",
+					Username:  update.EditedMessage.From.UserName,
+					Time:      update.EditedMessage.Time().String(),
+					Platform:  "tg",
+					AvatarURL: avatarURL,
 				}
 			}
 			fmt.Printf("Новый комментарий в обсуждении %d: %s\n", chatId, msg.Text)

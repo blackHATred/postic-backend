@@ -1,14 +1,17 @@
 package main
 
 import (
+	"github.com/SevereCloud/vksdk/v3/api"
 	"github.com/labstack/echo/v4"
 	"postic-backend/internal/delivery/http"
 	"postic-backend/internal/delivery/platform"
 )
 
+const ()
+
 func main() {
 	// инициализируем tg
-	tg, err := platform.NewTg("")
+	tg, err := platform.NewTg(TGToken)
 	if err != nil {
 		panic(err)
 	}
@@ -23,11 +26,14 @@ func main() {
 	// создаем сервер echo
 	echoServer := echo.New()
 	// Endpoints
-	api := echoServer.Group("/api")
-	comments := api.Group("/comments")
+	apiServer := echoServer.Group("/api")
+	comments := apiServer.Group("/comments")
 
-	var CommentDelivery = http.NewComment()
-	CommentDelivery.Configure(comments, tg, vk)
+	// инициализируем сервис комментариев
+	// vk
+	vkApi := api.NewVK(VKToken)
+	var CommentDelivery = http.NewComment(nil, tg, vk, SummarizeURL, vkApi)
+	CommentDelivery.Configure(comments)
 
 	echoServer.Logger.Fatal(echoServer.Start(":8080"))
 }

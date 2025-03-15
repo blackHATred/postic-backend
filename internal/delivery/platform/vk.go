@@ -55,17 +55,18 @@ func (v *Vk) ListenGroup(groupId int) error {
 	lp.WallReplyNew(func(ctx context.Context, obj events.WallReplyNewObject) {
 		// получаем имя пользователя и его аватарку
 		username, avatar, err := v.getUserNameAndAvatar(groupId, obj.FromID)
+		fmt.Printf("username: %s, avatar: %s\n", username, avatar)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-		v.chats[groupId] <- entity.Message{Id: obj.ID, Text: obj.Text, Type: "new", Username: username, Time: time.Now().Format(time.RFC3339), Platform: "vk", AvatarURL: avatar}
+		v.chats[groupId] <- entity.Message{Id: obj.ID, Text: obj.Text, Type: "new", Username: username, Time: time.Now().Format(time.RFC3339), Platform: "vk", AvatarURL: avatar, PostId: obj.PostID}
 	})
 	lp.WallReplyDelete(func(ctx context.Context, obj events.WallReplyDeleteObject) {
-		v.chats[groupId] <- entity.Message{Id: obj.ID, Text: "", Type: "delete", Time: time.Now().Format(time.RFC3339), Platform: "vk"}
+		v.chats[groupId] <- entity.Message{Id: obj.ID, Text: "", Type: "delete", Time: time.Now().Format(time.RFC3339), Platform: "vk", PostId: obj.PostID}
 	})
 	lp.WallReplyEdit(func(ctx context.Context, obj events.WallReplyEditObject) {
-		v.chats[groupId] <- entity.Message{Id: obj.ID, Text: obj.Text, Type: "update", Time: time.Now().Format(time.RFC3339), Platform: "vk"}
+		v.chats[groupId] <- entity.Message{Id: obj.ID, Text: obj.Text, Type: "update", Time: time.Now().Format(time.RFC3339), Platform: "vk", PostId: obj.PostID}
 	})
 	fmt.Printf("Vk group %d started\n", groupId)
 	return lp.Run()
@@ -75,7 +76,7 @@ func (v *Vk) getUserNameAndAvatar(groupId, userId int) (string, string, error) {
 	v.mu.Lock()
 	vk := v.groupIDs[groupId].api
 	v.mu.Unlock()
-	user, err := vk.UsersGet(api.Params{"user_ids": userId})
+	user, err := vk.UsersGet(api.Params{"user_ids": userId, "fields": "photo_200"})
 	if err != nil {
 		return "", "", err
 	}
