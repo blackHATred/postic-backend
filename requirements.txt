@@ -16,3 +16,5 @@ starlette==0.46.1
 typing_extensions==4.12.2
 uvicorn==0.34.0
 python-dotenv~=1.0.1
+vkbottle~=4.4.5
+tarantool~=1.2.0

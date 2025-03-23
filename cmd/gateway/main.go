@@ -7,7 +7,16 @@ import (
 	"postic-backend/internal/delivery/platform"
 )
 
-const ()
+const (
+	// VKToken - токен для доступа к API VK
+	VKToken = "vk1.a.doDQ6ftfhz6B1C2EfCAqOV7VjnJuPYZGY1c7fthyuLKWVry7jJsxh8Dl5LwIAR85zS7IfkXjIrHUtWjGm1gn5xwF3lSu27rh_ulu-dGKKBu2HVEIuy-tjHKURSLTXnvIagXeHxKUkifD4Prt7rMVMhLNxlEZltuJq2gCnTCkgJ3U49WPlBPfazlqu_fQUpOVJZdYxqyaKqqLdYvJkikP4Q"
+	// VKGroupID - ID группы VK
+	VKGroupID = 178248213
+	// TGToken - токен для доступа к API Telegram
+	TGToken = "8103674622:AAHN1Gzw8BtJiK4GyH_SAZHuq49U3fJKbk0"
+	// SummarizeURL - URL внешнего сервиса суммаризации
+	SummarizeURL = "http://localhost:8081/"
+)
 
 func main() {
 	// инициализируем tg
