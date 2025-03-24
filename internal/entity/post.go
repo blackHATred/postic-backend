@@ -24,3 +24,16 @@ type PostActionVK struct {
 	ID          int
 	PostUnionID int
 }
+
+type GetPostsResponse struct {
+	//наверное, лучше потом получать посты по teamID
+	UserID int
+	Posts  []PostUnion
+}
+
+type GetPostStatusResponse struct {
+	PostID     int
+	StatusVK   string
+	StatusTG   string
+	ErrMessage string
+}

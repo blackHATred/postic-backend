@@ -23,4 +23,8 @@ type Post interface {
 	EditPostActionVK(postUnionID int, status, errorMessage string) error
 	// AddPostVK добавляет пост в ВК
 	AddPostVK(postUnionID, postID int) error
+	// GetPosts возвращает список агрегированных постов
+	GetPosts(userID int) ([]*entity.PostUnion, error)
+
+	GetPostStatusVKTG(postID int) (*entity.GetPostStatusResponse, error)
 }

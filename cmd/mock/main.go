@@ -16,12 +16,13 @@ type Response struct {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	var req Request
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+	/*
+		var req Request
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}*/
 
 	resp := Response{
 		Markdown: "### Краткая сводка по комментариям\n- Пользователи хвалят качество звука. Особенно отмечают басы и низкие частоты.\n- Клиентам не очень нравится треск пластика продукта. Возможно, следует заменить материал изготовления наушников",

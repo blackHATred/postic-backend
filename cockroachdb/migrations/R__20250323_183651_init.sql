@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS mediafile (
 -- Общий пост
 CREATE TABLE IF NOT EXISTS post_union (
     id INT PRIMARY KEY,
-    team_id INT NOT NULL,
+    team_id INT NULL, -- NULL, временно
     FOREIGN KEY (team_id) REFERENCES team (id),
     user_id INT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES user (id),

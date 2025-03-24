@@ -25,6 +25,18 @@ func (p *Post) AddVKChannel(userID int, groupID int, apiKey string) error {
 	return p.postRepo.PutChannel(userID, groupID, apiKey)
 }
 
+func (p *Post) GetPostStatus(postID int) ([]*entity.GetPostStatusResponse, error) {
+	status, err := p.postRepo.GetPostStatusVKTG(postID)
+	if err != nil {
+		return nil, errors.New("get post status failed")
+	}
+	return []*entity.GetPostStatusResponse{status}, nil
+}
+
+func (p *Post) GetPosts(userID int) ([]*entity.PostUnion, error) {
+	return p.postRepo.GetPosts(userID)
+}
+
 func (p *Post) AddPost(request *entity.AddPostRequest) error {
 	if len(request.Platforms) == 0 {
 		return errors.New("no platforms")
