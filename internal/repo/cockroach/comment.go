@@ -1,4 +1,4 @@
-package service
+package cockroach
 
 import "postic-backend/internal/repo"
 

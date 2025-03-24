@@ -19,7 +19,7 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		return false
 	},
 }
 
@@ -46,6 +46,7 @@ func NewComment(commentUC usecase.Comment, tg *platform.Tg, vk *platform.Vk, sum
 
 func (e *Comment) Configure(server *echo.Group) {
 	wsHandler := NewWebSocketHandler(e)
+
 	server.GET("/ws", wsHandler.HandleConnections)
 	server.GET("/summary", e.Summary)
 }

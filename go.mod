@@ -6,6 +6,7 @@ require (
 	github.com/SevereCloud/vksdk/v3 v3.1.0
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/jmoiron/sqlx v1.4.0
 	github.com/labstack/echo/v4 v4.13.3
 )
 
