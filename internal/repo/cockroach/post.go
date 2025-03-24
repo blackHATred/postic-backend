@@ -1,7 +1,6 @@
 package cockroach
 
 import (
-	"errors"
 	"fmt"
 	"github.com/jmoiron/sqlx"
 	"postic-backend/internal/entity"
