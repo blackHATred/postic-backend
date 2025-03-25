@@ -25,8 +25,12 @@ type Post interface {
 	// EditPostActionStatus изменяет статус действия на создание поста
 	EditPostActionStatus(postUnionID int, status, errorMessage string) error
 
-	// Platform Posts
+	// Platforms
 
+	// GetLastUpdateTG возвращает id последнего обработанного event в telegram
+	GetLastUpdateTG() (int, error)
+	// SetLastUpdateTG устанавливает id последнего обработанного event в telegram
+	SetLastUpdateTG(updateID int) error
 	// AddPostVK добавляет пост в ВК
 	AddPostVK(postUnionID, postID int) error
 	// AddPostTG добавляет пост в Телеграм

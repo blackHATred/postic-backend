@@ -24,6 +24,7 @@ func NewUser(userUseCase usecase.User, cookieManager *utils.CookieManager) *User
 func (u *User) Configure(server *echo.Group) {
 	server.POST("/register", u.Register)
 	server.POST("/login", u.Login)
+	server.GET("/me", u.Me)
 	server.PUT("/set/vk", u.SetVK)
 }
 
@@ -63,6 +64,22 @@ func (u *User) Login(c echo.Context) error {
 	return c.JSON(http.StatusOK, echo.Map{
 		"user_id": userID,
 	})
+}
+
+func (u *User) Me(c echo.Context) error {
+	userID, err := u.cookieManager.GetUserIDFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	}
+	user, err := u.userUseCase.GetUser(userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": err.Error(),
+		})
+	}
+	return c.JSON(http.StatusOK, user)
 }
 
 func (u *User) SetVK(c echo.Context) error {

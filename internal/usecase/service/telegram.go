@@ -1,11 +1,15 @@
 package service
 
 import (
+	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/labstack/gommon/log"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
+	"strconv"
+	"strings"
+	"time"
 )
 
 type Telegram struct {
@@ -199,7 +203,179 @@ func NewTelegram(token string, postRepo repo.Post, userRepo repo.User, uploadRep
 		postActions: make(chan entity.PostAction),
 	}
 	go tgUC.postActionQueue()
+	go tgUC.EventListener()
 	return tgUC, nil
+}
+
+func (t *Telegram) botProcessForwardedMessage(update tgbotapi.Update) error {
+	channel := update.Message.ForwardFromChat
+	if !channel.IsChannel() {
+		_, err := t.bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "❌ Сообщение переслано не из канала"))
+		return err
+	}
+	channelID := channel.ID
+	admins, err := t.bot.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
+		ChatConfig: tgbotapi.ChatConfig{
+			ChatID: channelID,
+		},
+	})
+	if err != nil {
+		_, err = t.bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "❌ Не удалось получить список администраторов канала. Проверьте, что бот добавлен в администраторы канала."))
+		return err
+	}
+	isAdmin := false
+	for _, admin := range admins {
+		if admin.User.ID == t.bot.Self.ID {
+			isAdmin = true
+			break
+		}
+	}
+	var discussionID int64
+	chat, err := t.bot.GetChat(tgbotapi.ChatInfoConfig{
+		ChatConfig: tgbotapi.ChatConfig{ChatID: channelID},
+	})
+	if err != nil {
+		return err
+	}
+	if chat.LinkedChatID != 0 {
+		discussionID = chat.LinkedChatID
+	}
+	var isDiscussionAdmin bool
+	if discussionID != 0 {
+		chatMember, err := t.bot.GetChatMember(tgbotapi.GetChatMemberConfig{
+			ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
+				ChatID: discussionID,
+				UserID: t.bot.Self.ID,
+			},
+		})
+		if err != nil {
+			// ошибка может возвращаться в том случае, если бот - не админ в обсуждениях
+			isDiscussionAdmin = false
+		} else {
+			isDiscussionAdmin = chatMember.IsAdministrator()
+		}
+	}
+	var response string
+	if isAdmin {
+		response = fmt.Sprintf("✅ Бот является админом в указанном канале \"%s\".\n", channel.Title)
+	} else {
+		response = fmt.Sprintf("❌ Бот НЕ является админом в указанном канале \"%s\"\n", channel.Title)
+	}
+	if discussionID != 0 {
+		if isDiscussionAdmin {
+			response += fmt.Sprintf("✅ Бот является админом в обсуждениях. \nID канала: %d\nID обсуждений: %d", channelID, discussionID)
+		} else {
+			response += fmt.Sprintf("❌ Бот НЕ является админом в обсуждениях.\nID канала: %d\nID обсуждений: %d", channelID, discussionID)
+		}
+	} else {
+		response += fmt.Sprintf("\nID канала: %d\nОбсуждения не найдены", channelID)
+	}
+
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, response)
+	_, err = t.bot.Send(msg)
+	return err
+}
+
+func (t *Telegram) handleCommands(update tgbotapi.Update) error {
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, "")
+
+	switch update.Message.Command() {
+	case "start":
+		msg.Text = "Привет! Я бот, управляющий телеграм-каналами пользователей Postic. " +
+			"Используйте команду /help, чтобы увидеть список доступных команд."
+	case "help":
+		msg.Text = "Чтобы получить ID канала и ID обсуждений канала, перешлите мне из канала любое сообщение.\n" +
+			"Сначала убедитесь, что бот добавлен в администраторы канала и обсуждений (если у вас есть обсуждения, " +
+			"привязанные к каналу).\n\nСписок доступных команд:\n" +
+			"/start - Начать работу с ботом\n" +
+			"/help - Показать список команд\n" +
+			"/add_channel - Добавить канал"
+	case "add_channel":
+		args := update.Message.CommandArguments()
+		params := strings.Split(args, " ")
+		if len(params) != 3 && len(params) != 2 {
+			msg.Text = "Неверное количество параметров. Используйте: /add_channel <ключ пользователя> <ID канала> <ID обсуждений (при наличии)>.\n" +
+				"Чтобы узнать, как получить ID канала и ID обсуждений, можете воспользоваться командой /help.\n" +
+				"Примеры использования:\n" +
+				"`/add_channel token123456 -123456789` - если у вас нет обсуждений\n" +
+				"`/add_channel token123456 -123456789 -123456789` - если у вас есть обсуждения"
+			_, err := t.bot.Send(msg)
+			return err
+		}
+		secretKey := params[0]
+		channelID, err := strconv.ParseInt(params[1], 10, 64)
+		if err != nil || channelID >= 0 {
+			msg.Text = "Неверный формат channel_id. Используйте целое отрицательное число."
+			_, err := t.bot.Send(msg)
+			return err
+		}
+		discussionID, err := strconv.ParseInt(params[2], 10, 64)
+		if err != nil || discussionID >= 0 {
+			msg.Text = "Неверный формат discussion_id. Используйте целое отрицательное число."
+			_, err := t.bot.Send(msg)
+			return err
+		}
+		user, err := t.userRepo.GetUserBySecret(secretKey)
+		if err != nil {
+			msg.Text = "Неверный секретный ключ."
+			_, err := t.bot.Send(msg)
+			return err
+		}
+		err = t.userRepo.PutTGChannel(user.ID, int(channelID), int(discussionID))
+		if err != nil {
+			msg.Text = "Не удалось добавить канал. Обратитесь в поддержку для решения вопроса."
+			_, err := t.bot.Send(msg)
+			return err
+		}
+		msg.Text = "Канал успешно добавлен. Перейдите в личный кабинет и обновите страницу."
+	default:
+		msg.Text = "Неизвестная команда. Используйте /help, чтобы увидеть список доступных команд."
+	}
+
+	_, err := t.bot.Send(msg)
+	return err
+}
+
+func (t *Telegram) botProcessUpdate(update tgbotapi.Update) error {
+	if update.Message != nil && update.Message.ForwardFromChat != nil && update.Message.Chat.IsPrivate() {
+		// Пересланное сообщение
+		return t.botProcessForwardedMessage(update)
+	}
+	if update.Message != nil && update.Message.ForwardFrom != nil {
+		_, err := t.bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "❌ Сообщение переслано не из канала"))
+		return err
+	}
+	if update.Message != nil && update.Message.Command() != "" {
+		// Обработка команд
+		return t.handleCommands(update)
+	}
+	return nil
+}
+
+func (t *Telegram) EventListener() {
+	lastUpdateID, err := t.postRepo.GetLastUpdateTG()
+	for err != nil {
+		// Пытаемся постоянно получить последний event
+		log.Errorf("Telegram GetLastUpdateTG failed: %v", err)
+		time.Sleep(1 * time.Second)
+		lastUpdateID, err = t.postRepo.GetLastUpdateTG()
+	}
+
+	u := tgbotapi.NewUpdate(lastUpdateID + 1)
+	u.Timeout = 60
+	updates := t.bot.GetUpdatesChan(u)
+	for update := range updates {
+		if update.Message != nil {
+			err = t.botProcessUpdate(update)
+			if err != nil {
+				log.Errorf("Failed to process update: %v", err)
+			}
+			err = t.postRepo.SetLastUpdateTG(update.UpdateID)
+			if err != nil {
+				log.Errorf("Failed to set last update: %v", err)
+			}
+		}
+	}
 }
 
 /*

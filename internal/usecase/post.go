@@ -4,7 +4,7 @@ import "postic-backend/internal/entity"
 
 type Post interface {
 	// AddPost добавляет агрегированный пост
-	AddPost(request *entity.AddPostRequest) error
+	AddPost(request *entity.AddPostRequest) (int, error)
 	// GetPosts возвращает список агрегированных постов
 	GetPosts(userID int) ([]*entity.PostUnion, error)
 	// GetPostStatus возвращает статус публикации поста

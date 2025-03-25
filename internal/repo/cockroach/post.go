@@ -14,10 +14,26 @@ type PostDB struct {
 }
 
 func NewPost(db *sqlx.DB) repo.Post {
-	return PostDB{db: db}
+	return &PostDB{db: db}
 }
 
-func (p PostDB) GetPostsByUserID(userID int) ([]*entity.PostUnion, error) {
+func (p *PostDB) GetLastUpdateTG() (int, error) {
+	var lastUpdate int
+	query := `SELECT last_update_id FROM tg_bot_state WHERE id = 1`
+	err := p.db.Get(&lastUpdate, query)
+	if err != nil {
+		return 0, err
+	}
+	return lastUpdate, nil
+}
+
+func (p *PostDB) SetLastUpdateTG(updateID int) error {
+	query := `UPDATE tg_bot_state SET last_update_id = $1 WHERE id = 1`
+	_, err := p.db.Exec(query, updateID)
+	return err
+}
+
+func (p *PostDB) GetPostsByUserID(userID int) ([]*entity.PostUnion, error) {
 	var posts []*entity.PostUnion
 	query := `SELECT * FROM post_union WHERE user_id = $1`
 	err := p.db.Select(&posts, query, userID)
@@ -28,7 +44,7 @@ func (p PostDB) GetPostsByUserID(userID int) ([]*entity.PostUnion, error) {
 	return posts, nil
 }
 
-func (p PostDB) GetPostUnion(postUnionID int) (*entity.PostUnion, error) {
+func (p *PostDB) GetPostUnion(postUnionID int) (*entity.PostUnion, error) {
 	var post entity.PostUnion
 	var platforms []string
 	query := `SELECT id, user_id, text, platforms, created_at, pub_datetime FROM post_union WHERE id = $1`
@@ -50,14 +66,14 @@ func (p PostDB) GetPostUnion(postUnionID int) (*entity.PostUnion, error) {
 	return &post, nil
 }
 
-func (p PostDB) GetPostUnions(userID int) ([]*entity.PostUnion, error) {
+func (p *PostDB) GetPostUnions(userID int) ([]*entity.PostUnion, error) {
 	var posts []*entity.PostUnion
 	query := `SELECT id, user_id, text, platforms, created_at, pub_datetime FROM post_union WHERE user_id = $1`
 	rows, err := p.db.Queryx(query, userID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var post entity.PostUnion
@@ -84,7 +100,7 @@ func (p PostDB) GetPostUnions(userID int) ([]*entity.PostUnion, error) {
 	return posts, nil
 }
 
-func (p PostDB) AddPostUnion(union *entity.PostUnion) (int, error) {
+func (p *PostDB) AddPostUnion(union *entity.PostUnion) (int, error) {
 	// начинаем транзакцию и сначала добавляем агрегированный пост, а потом attachments к нему
 	tx, err := p.db.Beginx()
 	if err != nil {
@@ -124,7 +140,7 @@ func (p PostDB) AddPostUnion(union *entity.PostUnion) (int, error) {
 	return postUnionID, nil
 }
 
-func (p PostDB) GetPostAction(postUnionID int, platform string, last bool) (*entity.PostAction, error) {
+func (p *PostDB) GetPostAction(postUnionID int, platform string, last bool) (*entity.PostAction, error) {
 	var action entity.PostAction
 	query := `SELECT * FROM post_action WHERE post_union_id = $1 AND platform = $2 ORDER BY created_at DESC LIMIT 1`
 	err := p.db.Get(&action, query, postUnionID, platform)
@@ -134,7 +150,7 @@ func (p PostDB) GetPostAction(postUnionID int, platform string, last bool) (*ent
 	return &action, nil
 }
 
-func (p PostDB) AddPostAction(action *entity.PostAction) (int, error) {
+func (p *PostDB) AddPostAction(action *entity.PostAction) (int, error) {
 	var postActionID int
 	query := `INSERT INTO post_action (post_union_id, platform, status, error_message, created_at) 
 			  VALUES ($1, $2, $3, $4, $5) RETURNING id`
@@ -145,19 +161,19 @@ func (p PostDB) AddPostAction(action *entity.PostAction) (int, error) {
 	return postActionID, nil
 }
 
-func (p PostDB) EditPostActionStatus(postUnionID int, status, errorMessage string) error {
+func (p *PostDB) EditPostActionStatus(postUnionID int, status, errorMessage string) error {
 	query := `UPDATE post_action SET status = $1, error_message = $2 WHERE post_union_id = $3`
 	_, err := p.db.Exec(query, status, errorMessage, postUnionID)
 	return err
 }
 
-func (p PostDB) AddPostVK(postUnionID, postID int) error {
+func (p *PostDB) AddPostVK(postUnionID, postID int) error {
 	query := `INSERT INTO post_vk (post_union_id, post_id) VALUES ($1, $2)`
 	_, err := p.db.Exec(query, postUnionID, postID)
 	return err
 }
 
-func (p PostDB) AddPostTG(postUnionID, postID int) error {
+func (p *PostDB) AddPostTG(postUnionID, postID int) error {
 	query := `INSERT INTO post_tg (post_union_id, post_id) VALUES ($1, $2)`
 	_, err := p.db.Exec(query, postUnionID, postID)
 	return err

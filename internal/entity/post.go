@@ -22,12 +22,12 @@ type PostUnion struct {
 }
 
 type PostAction struct {
-	ID          int
-	PostUnionID int
-	Platform    string
-	Status      string
-	ErrMessage  string
-	CreatedAt   time.Time
+	ID          int       `db:"id"`
+	PostUnionID int       `db:"post_union_id"`
+	Platform    string    `db:"platform"`
+	Status      string    `db:"status"`
+	ErrMessage  string    `db:"error_message"`
+	CreatedAt   time.Time `db:"created_at"`
 }
 
 type GetPostsResponse struct {
