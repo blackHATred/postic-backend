@@ -42,12 +42,12 @@ func (p *Post) GetPosts(userID int) ([]*entity.PostUnion, error) {
 	return p.postRepo.GetPostsByUserID(userID)
 }
 
-func (p *Post) AddPost(request *entity.AddPostRequest) error {
+func (p *Post) AddPost(request *entity.AddPostRequest) (int, error) {
 	if len(request.Platforms) == 0 {
-		return errors.New("no platforms")
+		return 0, errors.New("no platforms")
 	}
 	if len(request.Attachments) == 0 && request.Text == "" {
-		return errors.New("no attachments and no text")
+		return 0, errors.New("no attachments and no text")
 	}
 	// сначала создаем запись об агрегированном посте
 	postUnionID, err := p.postRepo.AddPostUnion(
@@ -61,7 +61,7 @@ func (p *Post) AddPost(request *entity.AddPostRequest) error {
 		},
 	)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// затем создаем действия на публикацию
 	if slices.Contains(request.Platforms, "vk") {
@@ -78,11 +78,11 @@ func (p *Post) AddPost(request *entity.AddPostRequest) error {
 			CreatedAt:   time.Now(),
 		}
 		if err = p.telegramUseCase.AddPostInQueue(tgAddPostAction); err != nil {
-			return err
+			return 0, err
 		}
 	}
 
-	return nil
+	return postUnionID, nil
 }
 
 /*

@@ -26,6 +26,26 @@ func (u *User) AddUser() (int, error) {
 	return userID, nil
 }
 
+func (u *User) GetUser(userID int) (*entity.User, error) {
+	var user entity.User
+	query := `SELECT id, secret FROM "user" WHERE id = $1`
+	err := u.db.Get(&user, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (u *User) GetUserBySecret(secret string) (*entity.User, error) {
+	var user entity.User
+	query := `SELECT id, secret FROM "user" WHERE secret = $1`
+	err := u.db.Get(&user, query, secret)
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 func (u *User) GetTGChannel(userID int) (*entity.TGChannel, error) {
 	var channel entity.TGChannel
 	query := `SELECT id, user_id, channel_id, discussion_id FROM channel_tg WHERE user_id = $1`
@@ -46,7 +66,14 @@ func (u *User) PutVKChannel(userID, groupID int, apiKey string) error {
 	panic("implement me")
 }
 
-func (u *User) PutTGChannel(userID, groupID int, apiKey string) error {
-	//TODO implement me
-	panic("implement me")
+func (u *User) PutTGChannel(userID, channelID, discussionID int) error {
+	query := `
+		INSERT INTO channel_tg (user_id, channel_id, discussion_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (user_id) DO UPDATE
+		SET channel_id = EXCLUDED.channel_id,
+		    discussion_id = EXCLUDED.discussion_id
+	`
+	_, err := u.db.Exec(query, userID, channelID, discussionID)
+	return err
 }

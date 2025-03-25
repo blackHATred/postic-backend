@@ -1,6 +1,7 @@
 package service
 
 import (
+	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
 )
@@ -24,4 +25,8 @@ func (u *User) Login(userID int) (int, error) {
 func (u *User) SetVK(userID int, vkGroupID int, apiKey string) error {
 	//TODO implement me
 	panic("implement me")
+}
+
+func (u *User) GetUser(userID int) (*entity.User, error) {
+	return u.userRepo.GetUser(userID)
 }

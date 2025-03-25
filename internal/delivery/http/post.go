@@ -44,7 +44,7 @@ func (p *Post) AddPost(c echo.Context) error {
 	}
 	request.UserId = userID
 
-	err = p.postUseCase.AddPost(request)
+	postId, err := p.postUseCase.AddPost(request)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{
 			"error": err.Error(),
@@ -52,7 +52,8 @@ func (p *Post) AddPost(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, echo.Map{
-		"status": "ok",
+		"status":  "ok",
+		"post_id": postId,
 	})
 }
 
