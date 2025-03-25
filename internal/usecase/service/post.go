@@ -16,7 +16,8 @@ type Post struct {
 	vkUseCase       usecase.Platform
 }
 
-func NewPost(postRepo repo.Post, userRepo repo.User, telegram, vk usecase.Platform) usecase.Post {
+func NewPost(postRepo repo.Post, userRepo repo.User,
+	telegram, vk usecase.Platform) usecase.Post {
 	return &Post{
 		postRepo:        postRepo,
 		userRepo:        userRepo,
@@ -67,6 +68,16 @@ func (p *Post) AddPost(request *entity.AddPostRequest) error {
 	if slices.Contains(request.Platforms, "vk") {
 		// запускаем подзадачу на публикацию
 		// go p.postToVK(postUnionID)
+		vkAddPostAction := entity.PostAction{
+			PostUnionID: postUnionID,
+			Platform:    "vk",
+			Status:      "pending",
+			ErrMessage:  "",
+			CreatedAt:   time.Now(),
+		}
+		if err = p.vkUseCase.AddPostInQueue(vkAddPostAction); err != nil {
+			return err
+		}
 	}
 	if slices.Contains(request.Platforms, "tg") {
 		// запускаем подзадачу на публикацию

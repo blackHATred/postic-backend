@@ -37,8 +37,13 @@ func (u *User) GetTGChannel(userID int) (*entity.TGChannel, error) {
 }
 
 func (u *User) GetVKChannel(userID int) (*entity.VKChannel, error) {
-	//TODO implement me
-	panic("implement me")
+	var channel entity.VKChannel
+	query := `SELECT id, user_id, group_id, api_key FROM channel_vk WHERE user_id = $1`
+	err := u.db.Get(&channel, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &channel, nil
 }
 
 func (u *User) PutVKChannel(userID, groupID int, apiKey string) error {

@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS channel_vk (
     user_id INT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES "user" (id) ON DELETE CASCADE,
     group_id INT NOT NULL,
-    api_key STRING(128) NOT NULL,
+    api_key STRING(256) NOT NULL,
     last_updated_timestamp TIMESTAMP
 );
 

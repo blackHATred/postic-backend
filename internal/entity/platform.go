@@ -8,10 +8,10 @@ const (
 )
 
 type VKChannel struct {
-	ID      int
-	UserID  int
-	GroupID int
-	APIKey  string
+	ID      int    `db:"id"`
+	UserID  int    `db:"user_id"`
+	GroupID int    `db:"group_id"`
+	APIKey  string `db:"api_key"`
 }
 
 type TGChannel struct {

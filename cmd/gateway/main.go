@@ -55,7 +55,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Ошибка при создании сервиса Telegram (возможно, бот занят или предоставлен невалидный токен): %v", err)
 	}
-	postUseCase := service.NewPost(postRepo, userRepo, telegramUseCase, nil)
+	vkUseCase, err := service.NewVK(postRepo, userRepo, uploadRepo)
+	if err != nil {
+		log.Fatalf("Ошибка при создании сервиса VK: %v", err)
+	}
+
+	postUseCase := service.NewPost(postRepo, userRepo, telegramUseCase, vkUseCase)
 	userUseCase := service.NewUser(userRepo)
 	uploadUseCase := service.NewUpload(uploadRepo)
 
