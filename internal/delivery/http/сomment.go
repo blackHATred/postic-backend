@@ -11,6 +11,7 @@ import (
 	"postic-backend/internal/delivery/platform"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/usecase"
+	"postic-backend/internal/usecase/service"
 	"strings"
 	"sync"
 )
@@ -26,14 +27,14 @@ var upgrader = websocket.Upgrader{
 type Comment struct {
 	commentUC    usecase.Comment
 	summarizeURL string
-	tg           *platform.Tg
+	tg           *service.Telegram
 	vk           *platform.Vk
 	vkApi        *api.VK
 	vkMessages   map[int][]entity.Message // postId -> []message
 	mu           sync.Mutex
 }
 
-func NewComment(commentUC usecase.Comment, tg *platform.Tg, vk *platform.Vk, summarizeURL string, vkApi *api.VK) *Comment {
+func NewComment(commentUC usecase.Comment, tg *service.Telegram, vk *platform.Vk, summarizeURL string, vkApi *api.VK) *Comment {
 	return &Comment{
 		commentUC:    commentUC,
 		summarizeURL: summarizeURL,
@@ -107,7 +108,7 @@ func (h *WebSocketHandler) HandleConnections(c echo.Context) error {
 
 	// добавляем чат в tg
 	if initialMsg.TgChatId != 0 {
-		tgEventsChan = h.commentDelivery.tg.AddChat(initialMsg.TgChatId)
+		//tgEventsChan = h.commentDelivery.tg.AddChat(initialMsg.TgChatId)
 	}
 	// добавляем группу в vk
 	if initialMsg.VkKey != "" && initialMsg.VkGroupId != 0 {

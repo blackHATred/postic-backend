@@ -1,81 +1,49 @@
 package cockroach
 
 import (
-	"fmt"
 	"github.com/jmoiron/sqlx"
+	"github.com/labstack/gommon/log"
+	"github.com/lib/pq"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
+	"strings"
 )
 
 type PostDB struct {
-	DB *sqlx.DB
+	db *sqlx.DB
 }
 
-func NewPostRepo(db *sqlx.DB) repo.Post {
-	return PostDB{DB: db}
+func NewPost(db *sqlx.DB) repo.Post {
+	return PostDB{db: db}
 }
 
-func (p PostDB) PutChannel(userID, groupID int, apiKey string) error {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (p PostDB) GetVKChannel(userID int) (*entity.VKChannel, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (p PostDB) AddPostUnion(union *entity.PostUnion) (int, error) {
-	// тут нет teamID
-	query := `INSERT INTO post_union (user_id, text, created_at, pud_datetime) 
-	          VALUES ($1, $2, $3, $4, $5) RETURNING id`
-	var postID int
-	err := p.DB.QueryRow(query, union.UserID, union.Text, union.CreatedAt, union.PubDate).Scan(&postID)
+func (p PostDB) GetPostsByUserID(userID int) ([]*entity.PostUnion, error) {
+	var posts []*entity.PostUnion
+	query := `SELECT * FROM post_union WHERE user_id = $1`
+	err := p.db.Select(&posts, query, userID)
 	if err != nil {
-		return 0, err
+		log.Error("GetPostsByUserID: ", err)
+		return nil, err
 	}
-	return postID, nil
+	return posts, nil
 }
 
 func (p PostDB) GetPostUnion(postUnionID int) (*entity.PostUnion, error) {
 	var post entity.PostUnion
-	query := `SELECT id, user_id, text, created_at, pud_datetime FROM post_union WHERE id = $1`
-	err := p.DB.Get(&post, query, postUnionID)
+	var platforms []string
+	query := `SELECT id, user_id, text, platforms, created_at, pub_datetime FROM post_union WHERE id = $1`
+	err := p.db.QueryRowx(query, postUnionID).Scan(&post.ID, &post.UserID, &post.Text, pq.Array(&platforms), &post.CreatedAt, &post.PubDate)
 	if err != nil {
 		return nil, err
 	}
+	post.Platforms = platforms
 	return &post, nil
 }
 
-func (p PostDB) GetPostActionVK(postUnionID int) (*entity.PostActionVK, error) {
-	var action entity.PostActionVK
-	query := `SELECT id, post_union_id FROM action_post_vk WHERE post_union_id = $1`
-	err := p.DB.Get(&action, query, postUnionID)
-	if err != nil {
-		return nil, err
-	}
-	return &action, nil
-}
-
-func (p PostDB) AddPostActionVK(postUnionID int) (int, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (p PostDB) EditPostActionVK(postUnionID int, status, errorMessage string) error {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (p PostDB) AddPostVK(postUnionID, postID int) error {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (p PostDB) GetPosts(userID int) ([]*entity.PostUnion, error) {
+func (p PostDB) GetPostUnions(userID int) ([]*entity.PostUnion, error) {
 	var posts []*entity.PostUnion
-	query := `SELECT id, user_id, text, created_at, pud_datetime FROM post_union WHERE user_id = $1`
-	rows, err := p.DB.Queryx(query, userID)
+	query := `SELECT id, user_id, text, platforms, created_at, pub_datetime FROM post_union WHERE user_id = $1`
+	rows, err := p.db.Queryx(query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -83,32 +51,66 @@ func (p PostDB) GetPosts(userID int) ([]*entity.PostUnion, error) {
 
 	for rows.Next() {
 		var post entity.PostUnion
-		err := rows.Scan(&post.ID, &post.UserID, &post.Text, &post.CreatedAt, &post.PubDate)
-		if err != nil {
+		var platforms []string
+		if err := rows.Scan(&post.ID, &post.UserID, &post.Text, pq.Array(&platforms), &post.CreatedAt, &post.PubDate); err != nil {
 			return nil, err
 		}
+		post.Platforms = platforms
 		posts = append(posts, &post)
 	}
-
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return posts, nil
 }
 
-func (p PostDB) GetPostStatusVKTG(postID int) (*entity.GetPostStatusResponse, error) {
-	var statusVk, statusTg, errMsg string
-	query := `SELECT status, coalesce(error_message, '') FROM action_post_vk WHERE post_union_id = $1`
-	err := p.DB.QueryRow(query, postID).Scan(&statusVk, &errMsg)
+func (p PostDB) AddPostUnion(union *entity.PostUnion) (int, error) {
+	var postUnionID int
+	platformsArray := "{" + strings.Join(union.Platforms, ",") + "}"
+	query := `INSERT INTO post_union (user_id, text, platforms, created_at, pub_datetime) 
+			  VALUES ($1, $2, $3, $4, $5) RETURNING id`
+	err := p.db.QueryRow(query, union.UserID, union.Text, platformsArray, union.CreatedAt, union.PubDate).Scan(&postUnionID)
 	if err != nil {
-		return nil, fmt.Errorf("Ошибка получения статуса вк: %v", err)
+		return 0, err
 	}
+	return postUnionID, nil
+}
 
-	// TODO: убрать после добавления телеграма
-	statusTg = statusVk
-
-	resp := &entity.GetPostStatusResponse{
-		PostID:     postID,
-		StatusVK:   statusVk,
-		StatusTG:   statusTg,
-		ErrMessage: errMsg,
+func (p PostDB) GetPostAction(postUnionID int, platform string, last bool) (*entity.PostAction, error) {
+	var action entity.PostAction
+	query := `SELECT * FROM post_action WHERE post_union_id = $1 AND platform = $2 ORDER BY created_at DESC LIMIT 1`
+	err := p.db.Get(&action, query, postUnionID, platform)
+	if err != nil {
+		return nil, err
 	}
-	return resp, nil
+	return &action, nil
+}
+
+func (p PostDB) AddPostAction(action *entity.PostAction) (int, error) {
+	var postActionID int
+	query := `INSERT INTO post_action (post_union_id, platform, status, error_message, created_at) 
+			  VALUES ($1, $2, $3, $4, $5) RETURNING id`
+	err := p.db.QueryRow(query, action.PostUnionID, action.Platform, action.Status, action.ErrMessage, action.CreatedAt).Scan(&postActionID)
+	if err != nil {
+		return 0, err
+	}
+	return postActionID, nil
+}
+
+func (p PostDB) EditPostActionStatus(postUnionID int, status, errorMessage string) error {
+	query := `UPDATE post_action SET status = $1, error_message = $2 WHERE post_union_id = $3`
+	_, err := p.db.Exec(query, status, errorMessage, postUnionID)
+	return err
+}
+
+func (p PostDB) AddPostVK(postUnionID, postID int) error {
+	query := `INSERT INTO post_vk (post_union_id, post_id) VALUES ($1, $2)`
+	_, err := p.db.Exec(query, postUnionID, postID)
+	return err
+}
+
+func (p PostDB) AddPostTG(postUnionID, postID int) error {
+	query := `INSERT INTO post_tg (post_union_id, post_id) VALUES ($1, $2)`
+	_, err := p.db.Exec(query, postUnionID, postID)
+	return err
 }

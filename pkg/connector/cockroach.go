@@ -1,9 +1,12 @@
 package connector
 
-import "github.com/jmoiron/sqlx"
+import (
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
+)
 
-func GetPostgresConnector(dsn string) (*sqlx.DB, error) {
-	db, err := sqlx.Open("postgres", dsn)
+func GetConnector(dsn string) (*sqlx.DB, error) {
+	db, err := sqlx.Open("postgres", dsn) // cockroach работает с драйвером postgres
 	if err != nil {
 		return nil, err
 	}

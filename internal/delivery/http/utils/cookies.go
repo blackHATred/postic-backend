@@ -29,7 +29,7 @@ func (c *CookieManager) NewUserIDCookie(userID int, expires time.Time) *http.Coo
 
 func (c *CookieManager) GetUserIDFromContext(ctx echo.Context) (int, error) {
 	// Потом нужно будет сделать нормальную проверку на авторизацию
-	cookie, err := ctx.Cookie("user_id")
+	cookie, err := ctx.Cookie("session")
 	if err != nil {
 		return -1, err
 	}

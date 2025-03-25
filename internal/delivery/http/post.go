@@ -22,9 +22,9 @@ func NewPost(cookiesManager *utils.CookieManager, postUseCase usecase.Post) *Pos
 }
 
 func (p *Post) Configure(server *echo.Group) {
-	server.POST("/posts", p.AddPost)
-	server.GET("/posts", p.GetPosts)
-	server.GET("/posts/:id/status", p.GetPostStatus)
+	server.POST("/add", p.AddPost)
+	server.GET("/list", p.GetPosts)
+	server.GET("/status/:id", p.GetPostStatus)
 }
 
 func (p *Post) AddPost(c echo.Context) error {
@@ -57,7 +57,6 @@ func (p *Post) AddPost(c echo.Context) error {
 }
 
 func (p *Post) GetPosts(c echo.Context) error {
-	// todo Кристина
 	userID, err := p.cookiesManager.GetUserIDFromContext(c)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, echo.Map{
@@ -85,7 +84,13 @@ func (p *Post) GetPostStatus(c echo.Context) error {
 			"error": "Неверный ID поста",
 		})
 	}
-	status, err := p.postUseCase.GetPostStatus(id)
+	platform := c.QueryParam("platform")
+	if platform == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Не указана платформа (query-param platform)",
+		})
+	}
+	status, err := p.postUseCase.GetPostStatus(id, platform)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{
 			"error": err.Error(),

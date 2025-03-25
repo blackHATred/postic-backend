@@ -12,28 +12,31 @@ type AddPostRequest struct {
 }
 
 type PostUnion struct {
-	ID          int
-	Text        string
-	PubDate     time.Time
-	Attachments []int
-	CreatedAt   time.Time
-	UserID      int
+	ID          int       `db:"id"`
+	Text        string    `db:"text"`
+	Platforms   []string  `db:"platforms"`
+	PubDate     time.Time `db:"pub_datetime"`
+	Attachments []int     `db:"attachments"`
+	CreatedAt   time.Time `db:"created_at"`
+	UserID      int       `db:"user_id"`
 }
 
-type PostActionVK struct {
+type PostAction struct {
 	ID          int
 	PostUnionID int
+	Platform    string
+	Status      string
+	ErrMessage  string
+	CreatedAt   time.Time
 }
 
 type GetPostsResponse struct {
-	//наверное, лучше потом получать посты по teamID
-	UserID int
-	Posts  []PostUnion
+	Posts []PostUnion `json:"posts"`
 }
 
 type GetPostStatusResponse struct {
-	PostID     int
-	StatusVK   string
-	StatusTG   string
-	ErrMessage string
+	PostID     int    `json:"post_id"`
+	Platform   string `json:"platform"`
+	Status     string `json:"status"`
+	ErrMessage string `json:"err_message"`
 }

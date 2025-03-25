@@ -25,4 +25,3 @@ services:
 
 volumes:
   cockroach-data:
-  kafka-data:

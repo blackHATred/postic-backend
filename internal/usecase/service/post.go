@@ -2,7 +2,6 @@ package service
 
 import (
 	"errors"
-	"github.com/SevereCloud/vksdk/v3/api"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
@@ -11,30 +10,36 @@ import (
 )
 
 type Post struct {
-	postRepo repo.Post
+	postRepo        repo.Post
+	userRepo        repo.User
+	telegramUseCase usecase.Platform
+	vkUseCase       usecase.Platform
 }
 
-func NewPost(postRepo repo.Post) usecase.Post {
+func NewPost(postRepo repo.Post, userRepo repo.User, telegram, vk usecase.Platform) usecase.Post {
 	return &Post{
-		postRepo: postRepo,
+		postRepo:        postRepo,
+		userRepo:        userRepo,
+		telegramUseCase: telegram,
+		vkUseCase:       vk,
 	}
 }
 
-func (p *Post) AddVKChannel(userID int, groupID int, apiKey string) error {
-	// пока что без какой-либо глубокой логики
-	return p.postRepo.PutChannel(userID, groupID, apiKey)
-}
-
-func (p *Post) GetPostStatus(postID int) ([]*entity.GetPostStatusResponse, error) {
-	status, err := p.postRepo.GetPostStatusVKTG(postID)
+func (p *Post) GetPostStatus(postID int, platform string) (*entity.GetPostStatusResponse, error) {
+	action, err := p.postRepo.GetPostAction(postID, platform, true)
 	if err != nil {
-		return nil, errors.New("get post status failed")
+		return nil, err
 	}
-	return []*entity.GetPostStatusResponse{status}, nil
+	return &entity.GetPostStatusResponse{
+		PostID:     postID,
+		Platform:   platform,
+		Status:     action.Status,
+		ErrMessage: action.ErrMessage,
+	}, nil
 }
 
 func (p *Post) GetPosts(userID int) ([]*entity.PostUnion, error) {
-	return p.postRepo.GetPosts(userID)
+	return p.postRepo.GetPostsByUserID(userID)
 }
 
 func (p *Post) AddPost(request *entity.AddPostRequest) error {
@@ -50,6 +55,7 @@ func (p *Post) AddPost(request *entity.AddPostRequest) error {
 			Text:        request.Text,
 			PubDate:     time.Unix(int64(request.PubTime), 0),
 			Attachments: request.Attachments,
+			Platforms:   request.Platforms,
 			CreatedAt:   time.Now(),
 			UserID:      request.UserId,
 		},
@@ -60,16 +66,26 @@ func (p *Post) AddPost(request *entity.AddPostRequest) error {
 	// затем создаем действия на публикацию
 	if slices.Contains(request.Platforms, "vk") {
 		// запускаем подзадачу на публикацию
-		go p.postToVK(postUnionID)
+		// go p.postToVK(postUnionID)
 	}
 	if slices.Contains(request.Platforms, "tg") {
 		// запускаем подзадачу на публикацию
-		// todo
+		tgAddPostAction := entity.PostAction{
+			PostUnionID: postUnionID,
+			Platform:    "tg",
+			Status:      "pending",
+			ErrMessage:  "",
+			CreatedAt:   time.Now(),
+		}
+		if err = p.telegramUseCase.AddPostInQueue(tgAddPostAction); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
+/*
 func (p *Post) postToVK(postUnionID int) {
 	// создаём новое действие
 	postActionID, err := p.postRepo.AddPostActionVK(postUnionID)
@@ -105,6 +121,7 @@ func (p *Post) postToVK(postUnionID int) {
 		return
 	}
 	// обновляем статус
-	_ = p.postRepo.EditPostActionVK(postActionID, "success", "")
+	_ = p.postRepo.EditPostAction(postActionID, "success", "")
 	_ = p.postRepo.AddPostVK(postUnion.ID, response.PostID)
 }
+*/
