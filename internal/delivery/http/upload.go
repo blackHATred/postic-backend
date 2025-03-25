@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"postic-backend/internal/delivery/http/utils"
+	"postic-backend/internal/entity"
 	"postic-backend/internal/usecase"
 )
 
@@ -23,7 +24,7 @@ func NewUpload(uploadUseCase usecase.Upload, userUseCase usecase.User, cookiesMa
 }
 
 func (u *Upload) Configure(server *echo.Group) {
-	server.POST("/upload", u.Upload)
+	server.POST("/", u.Upload)
 }
 
 func (u *Upload) Upload(c echo.Context) error {
@@ -51,24 +52,32 @@ func (u *Upload) Upload(c echo.Context) error {
 		})
 	}
 
-	// Сохраняем файл в папку
-	content, err := file.Open()
+	// Читаем байты из файла и сохраняем
+	fileBytes, err := file.Open()
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": "Ошибка при открытии файла: " + err.Error(),
+			"error": "Ошибка чтения файла: " + err.Error(),
 		})
 	}
-	contentBytes, err := io.ReadAll(content)
+	defer func() { _ = fileBytes.Close() }()
+
+	upload := &entity.Upload{
+		UserID:   userID,
+		FilePath: file.Filename,
+		FileType: fileType,
+		RawBytes: make([]byte, file.Size),
+	}
+	_, err = io.ReadFull(fileBytes, upload.RawBytes)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": "Ошибка при чтении файла: " + err.Error(),
+			"error": "Ошибка чтения файла: " + err.Error(),
 		})
 	}
-	filename := file.Filename
-	fileID, err := u.uploadUseCase.SaveFile(filename, contentBytes, fileType, userID)
+
+	fileID, err := u.uploadUseCase.UploadFile(upload)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": "Ошибка при сохранении файла: " + err.Error(),
+			"error": "Ошибка сохранения файла: " + err.Error(),
 		})
 	}
 

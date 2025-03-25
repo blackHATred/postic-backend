@@ -24,8 +24,8 @@ func main() {
 	}
 	telegramBotToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 
-	// DBConn
-	DBConn, err := connector.GetConnector("user=root dbname=defaultdb sslmode=disable port=26257") // примерный вид dsn: "user=root dbname=defaultdb sslmode=disable"
+	// cockroach
+	DBConn, err := connector.GetCockroachConnector("user=root dbname=defaultdb sslmode=disable port=26257") // примерный вид dsn: "user=root dbname=defaultdb sslmode=disable"
 	if err != nil {
 		log.Fatalf("Ошибка при подключении к базе данных: %v", err)
 	}
@@ -36,10 +36,19 @@ func main() {
 		}
 	}()
 
+	// minio
+	minioClient, err := connector.GetMinioConnector("localhost:9000", "minioadmin", "minioadmin", false)
+	if err != nil {
+		log.Fatalf("Ошибка при подключении к MinIO: %v", err)
+	}
+
 	// запускаем сервисы репозиториев (подключение к базе данных)
 	userRepo := cockroach.NewUser(DBConn)
 	postRepo := cockroach.NewPost(DBConn)
-	uploadRepo := cockroach.NewUpload(DBConn)
+	uploadRepo, err := cockroach.NewUpload(DBConn, minioClient)
+	if err != nil {
+		log.Fatalf("Ошибка при создании репозитория Upload: %v", err)
+	}
 
 	// запускаем сервисы usecase (бизнес-логика)
 	telegramUseCase, err := service.NewTelegram(telegramBotToken, postRepo, userRepo, uploadRepo)
@@ -48,11 +57,13 @@ func main() {
 	}
 	postUseCase := service.NewPost(postRepo, userRepo, telegramUseCase, nil)
 	userUseCase := service.NewUser(userRepo)
+	uploadUseCase := service.NewUpload(uploadRepo)
 
 	// запускаем сервисы delivery (обработка запросов)
 	cookieManager := utils.NewCookieManager(false)
 	postDelivery := delivery.NewPost(cookieManager, postUseCase)
 	userDelivery := delivery.NewUser(userUseCase, cookieManager)
+	uploadDelivery := delivery.NewUpload(uploadUseCase, userUseCase, cookieManager)
 
 	// REST API
 	echoServer := echo.New()
@@ -69,6 +80,9 @@ func main() {
 	// users
 	users := api.Group("/user")
 	userDelivery.Configure(users)
+	// uploads
+	uploads := api.Group("/upload")
+	uploadDelivery.Configure(uploads)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer stop()

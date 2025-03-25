@@ -5,7 +5,7 @@ import (
 	_ "github.com/lib/pq"
 )
 
-func GetConnector(dsn string) (*sqlx.DB, error) {
+func GetCockroachConnector(dsn string) (*sqlx.DB, error) {
 	db, err := sqlx.Open("postgres", dsn) // cockroach работает с драйвером postgres
 	if err != nil {
 		return nil, err

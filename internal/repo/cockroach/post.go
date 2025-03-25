@@ -37,6 +37,16 @@ func (p PostDB) GetPostUnion(postUnionID int) (*entity.PostUnion, error) {
 		return nil, err
 	}
 	post.Platforms = platforms
+
+	// Fetch attachments for the post
+	var attachments []int
+	attachmentsQuery := `SELECT mediafile_id FROM post_union_mediafile WHERE post_union_id = $1`
+	err = p.db.Select(&attachments, attachmentsQuery, post.ID)
+	if err != nil {
+		return nil, err
+	}
+	post.Attachments = attachments
+
 	return &post, nil
 }
 
@@ -56,6 +66,16 @@ func (p PostDB) GetPostUnions(userID int) ([]*entity.PostUnion, error) {
 			return nil, err
 		}
 		post.Platforms = platforms
+
+		// Fetch attachments for the post
+		var attachments []int
+		attachmentsQuery := `SELECT mediafile_id FROM post_union_mediafile WHERE post_union_id = $1`
+		err = p.db.Select(&attachments, attachmentsQuery, post.ID)
+		if err != nil {
+			return nil, err
+		}
+		post.Attachments = attachments
+
 		posts = append(posts, &post)
 	}
 	if err := rows.Err(); err != nil {
@@ -65,14 +85,42 @@ func (p PostDB) GetPostUnions(userID int) ([]*entity.PostUnion, error) {
 }
 
 func (p PostDB) AddPostUnion(union *entity.PostUnion) (int, error) {
+	// начинаем транзакцию и сначала добавляем агрегированный пост, а потом attachments к нему
+	tx, err := p.db.Beginx()
+	if err != nil {
+		return 0, err
+	}
+
 	var postUnionID int
 	platformsArray := "{" + strings.Join(union.Platforms, ",") + "}"
 	query := `INSERT INTO post_union (user_id, text, platforms, created_at, pub_datetime) 
 			  VALUES ($1, $2, $3, $4, $5) RETURNING id`
-	err := p.db.QueryRow(query, union.UserID, union.Text, platformsArray, union.CreatedAt, union.PubDate).Scan(&postUnionID)
+	err = tx.QueryRow(query, union.UserID, union.Text, platformsArray, union.CreatedAt, union.PubDate).Scan(&postUnionID)
+	if err != nil {
+		errRollback := tx.Rollback()
+		if errRollback != nil {
+			log.Errorf("AddPostUnion Rollback Error: %v", errRollback)
+		}
+		return 0, err
+	}
+
+	for _, attachment := range union.Attachments {
+		query = `INSERT INTO post_union_mediafile (post_union_id, mediafile_id) VALUES ($1, $2)`
+		_, err = tx.Exec(query, postUnionID, attachment)
+		if err != nil {
+			errRollback := tx.Rollback()
+			if errRollback != nil {
+				log.Errorf("AddPostUnion Rollback Error: %v", errRollback)
+			}
+			return 0, err
+		}
+	}
+
+	err = tx.Commit()
 	if err != nil {
 		return 0, err
 	}
+
 	return postUnionID, nil
 }
 

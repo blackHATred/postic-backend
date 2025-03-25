@@ -29,7 +29,7 @@ func (t *Telegram) postActionQueue() {
 
 func (t *Telegram) getMediaGroup(attachments []int, caption string) ([]any, error) {
 	var mediaGroup []any
-	for _, attachmentID := range attachments {
+	for i, attachmentID := range attachments {
 		upload, err := t.uploadRepo.GetUpload(attachmentID)
 		if err != nil {
 			log.Errorf("TG POST: GetUpload failed: %v", err)
@@ -38,24 +38,30 @@ func (t *Telegram) getMediaGroup(attachments []int, caption string) ([]any, erro
 		switch upload.FileType {
 		case "photo":
 			mediaPhoto := tgbotapi.NewInputMediaPhoto(tgbotapi.FileBytes{
-				Name:  upload.FileName,
+				Name:  upload.FilePath,
 				Bytes: upload.RawBytes,
 			})
-			mediaPhoto.Caption = caption
+			if i == 0 {
+				mediaPhoto.Caption = caption
+			}
 			mediaGroup = append(mediaGroup, mediaPhoto)
 		case "video":
 			mediaVideo := tgbotapi.NewInputMediaVideo(tgbotapi.FileBytes{
-				Name:  upload.FileName,
+				Name:  upload.FilePath,
 				Bytes: upload.RawBytes,
 			})
-			mediaVideo.Caption = caption
+			if i == 0 {
+				mediaVideo.Caption = caption
+			}
 			mediaGroup = append(mediaGroup, mediaVideo)
 		case "raw":
 			mediaDocument := tgbotapi.NewInputMediaDocument(tgbotapi.FileBytes{
-				Name:  upload.FileName,
+				Name:  upload.FilePath,
 				Bytes: upload.RawBytes,
 			})
-			mediaDocument.Caption = caption
+			if i == 0 {
+				mediaDocument.Caption = caption
+			}
 			mediaGroup = append(mediaGroup, mediaDocument)
 		default:
 			continue
@@ -82,9 +88,51 @@ func (t *Telegram) post(action entity.PostAction) {
 		return
 	}
 	var newPost tgbotapi.Message
+	log.Printf("TG POST: PostUnion: %v\n", postUnion)
 	// Публикуем пост
 	switch {
-	// От 1 до 10 картинок или видео
+	// Один медиафайл
+	case len(postUnion.Attachments) == 1:
+		upload, err := t.uploadRepo.GetUpload(postUnion.Attachments[0])
+		if err != nil {
+			log.Errorf("TG POST: GetUpload failed: %v", err)
+			return
+		}
+		var attachment tgbotapi.Chattable
+		switch upload.FileType {
+		case "photo":
+			photoConfig := tgbotapi.NewPhoto(int64(tgChannel.ChannelID), tgbotapi.FileBytes{
+				Name:  upload.FilePath,
+				Bytes: upload.RawBytes,
+			})
+			photoConfig.Caption = postUnion.Text
+			attachment = photoConfig
+		case "video":
+			videoConfig := tgbotapi.NewVideo(int64(tgChannel.ChannelID), tgbotapi.FileBytes{
+				Name:  upload.FilePath,
+				Bytes: upload.RawBytes,
+			})
+			videoConfig.Caption = postUnion.Text
+			attachment = videoConfig
+		case "raw":
+			documentConfig := tgbotapi.NewDocument(int64(tgChannel.ChannelID), tgbotapi.FileBytes{
+				Name:  upload.FilePath,
+				Bytes: upload.RawBytes,
+			})
+			documentConfig.Caption = postUnion.Text
+			attachment = documentConfig
+		}
+		newPost, err = t.bot.Send(attachment)
+		if err != nil {
+			log.Errorf("TG POST: Send failed: %v", err)
+			// Меняем статус действия на ошибку
+			err = t.postRepo.EditPostActionStatus(postActionID, "error", err.Error())
+			if err != nil {
+				log.Errorf("TG POST: EditPostActionStatus failed: %v", err)
+			}
+			return
+		}
+	// От 2 до 10 картинок или видео
 	case len(postUnion.Attachments) > 1 && len(postUnion.Attachments) <= 10:
 		mediaGroup, err := t.getMediaGroup(postUnion.Attachments, postUnion.Text)
 		if err != nil {
@@ -118,6 +166,11 @@ func (t *Telegram) post(action entity.PostAction) {
 	// Остальные случаи - не поддерживаются
 	default:
 		log.Errorf("TG POST: Unsupported post type")
+		err = t.postRepo.EditPostActionStatus(postActionID, "error", "Для публикации необходимо от 1 до 10 медиафайлов или текстовое содержание")
+		if err != nil {
+			log.Errorf("TG POST: EditPostActionStatus failed: %v", err)
+		}
+		return
 	}
 	// Изменяем статус действия на успешный
 	err = t.postRepo.EditPostActionStatus(postActionID, "success", "")
