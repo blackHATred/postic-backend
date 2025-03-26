@@ -61,13 +61,14 @@ func main() {
 	postUseCase := service.NewPost(postRepo, userRepo, telegramUseCase, nil)
 	userUseCase := service.NewUser(userRepo)
 	uploadUseCase := service.NewUpload(uploadRepo)
+	commentUseCase := service.NewComment(commentRepo, "http://me-herbs.gl.at.ply.gg:2465/sum")
 
 	// запускаем сервисы delivery (обработка запросов)
 	cookieManager := utils.NewCookieManager(false)
 	postDelivery := delivery.NewPost(cookieManager, postUseCase)
 	userDelivery := delivery.NewUser(userUseCase, cookieManager)
 	uploadDelivery := delivery.NewUpload(uploadUseCase, userUseCase, cookieManager)
-	commentDelivery := delivery.NewComment(cookieManager, telegramUseCase)
+	commentDelivery := delivery.NewComment(cookieManager, telegramUseCase, commentUseCase)
 
 	// REST API
 	echoServer := echo.New()

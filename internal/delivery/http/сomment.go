@@ -24,18 +24,21 @@ var upgrader = websocket.Upgrader{
 type Comment struct {
 	cookiesManager *utils.CookieManager
 	tgUseCase      usecase.Telegram
+	commentUseCase usecase.Comment
 }
 
-func NewComment(cookiesManager *utils.CookieManager, tgUseCase usecase.Telegram) *Comment {
+func NewComment(cookiesManager *utils.CookieManager, tgUseCase usecase.Telegram, commentUseCase usecase.Comment) *Comment {
 	return &Comment{
 		cookiesManager: cookiesManager,
 		tgUseCase:      tgUseCase,
+		commentUseCase: commentUseCase,
 	}
 }
 
 func (c *Comment) Configure(server *echo.Group) {
 	server.GET("/ws", c.handleWSConnection)
 	server.GET("/user/tg/:id", c.getTGUserInfo)
+	server.GET("/summarize/:id", c.getSummarize)
 }
 
 func (c *Comment) getTGUserInfo(ctx echo.Context) error {
@@ -145,4 +148,20 @@ func (c *Comment) handleWSConnection(ctx echo.Context) error {
 	// Ждём завершения чтения
 	<-done
 	return nil
+}
+
+func (c *Comment) getSummarize(ctx echo.Context) error {
+	postUnionID, err := strconv.Atoi(ctx.Param("id"))
+	if err != nil {
+		return ctx.JSON(http.StatusBadRequest, echo.Map{
+			"error": "неверный формат id поста",
+		})
+	}
+	summarize, err := c.commentUseCase.GetSummarize(postUnionID)
+	if err != nil {
+		return ctx.JSON(http.StatusInternalServerError, echo.Map{
+			"error": err.Error(),
+		})
+	}
+	return ctx.JSON(http.StatusOK, summarize)
 }

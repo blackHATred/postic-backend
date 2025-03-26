@@ -17,6 +17,35 @@ func NewComment(db *sqlx.DB) repo.Comment {
 	}
 }
 
+func (c *Comment) GetLastComments(postUnionID int, limit int) ([]*entity.JustTextComment, error) {
+	rows, err := c.db.Queryx(`
+		SELECT c.text
+		FROM post_tg_comment c
+		JOIN post_tg p ON c.post_tg_id = p.id
+		WHERE p.post_union_id = $1
+		ORDER BY c.created_at DESC
+		LIMIT $2
+	`, postUnionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var comments []*entity.JustTextComment
+	for rows.Next() {
+		var comment entity.JustTextComment
+		if err := rows.Scan(&comment.Text); err != nil {
+			return nil, err
+		}
+		comments = append(comments, &comment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return comments, nil
+}
+
 func (c *Comment) GetTGComments(postUnionID int, offset time.Time, limit int) ([]*entity.TelegramComment, error) {
 	rows, err := c.db.Queryx(`
 	SELECT id, post_tg_id, comment_id, user_id, text, created_at
