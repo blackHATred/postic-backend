@@ -4,23 +4,138 @@ import (
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/labstack/gommon/log"
+	"io"
+	"net/http"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Telegram struct {
-	bot         *tgbotapi.BotAPI
-	postRepo    repo.Post
-	userRepo    repo.User
-	uploadRepo  repo.Upload
-	postActions chan entity.PostAction
+	bot          *tgbotapi.BotAPI
+	postRepo     repo.Post
+	userRepo     repo.User
+	uploadRepo   repo.Upload
+	commentRepo  repo.Comment
+	channelRepo  repo.Channel
+	commentsChan chan *entity.Comment
+	postActions  chan *entity.PostAction
+	subscribers  map[chan *entity.TelegramComment]struct{}
+	mu           sync.Mutex
 }
 
-func (t *Telegram) AddPostInQueue(postAction entity.PostAction) error {
+func (t *Telegram) GetRawAttachment(attachmentID int) (*entity.TelegramMessageAttachment, error) {
+	attachment, err := t.commentRepo.GetTGAttachment(attachmentID)
+	if err != nil {
+		return nil, err
+	}
+	// Теперь получаем содержимое файла от Telegram
+	file, err := t.bot.GetFile(tgbotapi.FileConfig{FileID: attachment.FileID})
+	if err != nil {
+		return nil, err
+	}
+	// скачиваем массив байтов
+	url := file.Link(t.bot.Token)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	fileBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	attachment.RawBytes = fileBytes
+	return attachment, nil
+}
+
+func NewTelegram(token string, postRepo repo.Post, userRepo repo.User, uploadRepo repo.Upload, commentRepo repo.Comment, channelRepo repo.Channel) (usecase.Telegram, error) {
+	bot, err := tgbotapi.NewBotAPI(token)
+	if err != nil {
+		return nil, err
+	}
+	bot.Debug = true
+	log.Infof("Authorized on account %s", bot.Self.UserName)
+	tgUC := &Telegram{
+		bot:          bot,
+		postRepo:     postRepo,
+		userRepo:     userRepo,
+		uploadRepo:   uploadRepo,
+		commentRepo:  commentRepo,
+		channelRepo:  channelRepo,
+		commentsChan: make(chan *entity.Comment),
+		postActions:  make(chan *entity.PostAction),
+		subscribers:  make(map[chan *entity.TelegramComment]struct{}),
+	}
+	go tgUC.postActionQueue()
+	go tgUC.eventListener()
+	return tgUC, nil
+}
+
+func (t *Telegram) Subscribe() chan *entity.TelegramComment {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	ch := make(chan *entity.TelegramComment)
+	t.subscribers[ch] = struct{}{}
+	return ch
+}
+
+func (t *Telegram) Unsubscribe(ch chan *entity.TelegramComment) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.subscribers, ch)
+	close(ch)
+}
+
+func (t *Telegram) notifySubscribers(comment *entity.TelegramComment) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for ch := range t.subscribers {
+		select {
+		case ch <- comment:
+		default:
+			// Если канал не готов принять сообщение, то отписываем его
+			t.Unsubscribe(ch)
+		}
+	}
+}
+
+func (t *Telegram) GetComments(postUnionID int, offset time.Time, limit int) ([]*entity.TelegramComment, error) {
+	// Получаем комментарии к посту с учётом оффсета по времени и лимита
+	comments, err := t.commentRepo.GetTGComments(postUnionID, offset, limit)
+	if err != nil {
+		return nil, err
+	}
+	return comments, nil
+}
+
+func (t *Telegram) GetUser(userID int) (*entity.PlatformUser, error) {
+	// получаем информацию о пользователе по его айди в телеграме
+	chatMember, err := t.bot.GetChatMember(tgbotapi.GetChatMemberConfig{
+		ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
+			ChatID: 0, // ChatID is not needed for private user info
+			UserID: int64(userID),
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user info: %v", err)
+	}
+
+	user := &entity.PlatformUser{
+		UserID:   userID,
+		Platform: "tg",
+		Name:     chatMember.User.FirstName + " " + chatMember.User.LastName,
+		Nickname: chatMember.User.UserName,
+	}
+
+	return user, nil
+}
+
+func (t *Telegram) AddPostInQueue(postAction *entity.PostAction) error {
 	t.postActions <- postAction
 	return nil
 }
@@ -74,9 +189,9 @@ func (t *Telegram) getMediaGroup(attachments []int, caption string) ([]any, erro
 	return mediaGroup, nil
 }
 
-func (t *Telegram) post(action entity.PostAction) {
+func (t *Telegram) post(action *entity.PostAction) {
 	// Создаём действие на создание поста
-	postActionID, err := t.postRepo.AddPostAction(&action)
+	postActionID, err := t.postRepo.AddPostAction(action)
 	if err != nil {
 		log.Errorf("TG POST: AddPostAction failed: %v", err)
 		return
@@ -188,25 +303,6 @@ func (t *Telegram) post(action entity.PostAction) {
 	}
 }
 
-func NewTelegram(token string, postRepo repo.Post, userRepo repo.User, uploadRepo repo.Upload) (usecase.Platform, error) {
-	bot, err := tgbotapi.NewBotAPI(token)
-	if err != nil {
-		return nil, err
-	}
-	bot.Debug = true
-	log.Infof("Authorized on account %s", bot.Self.UserName)
-	tgUC := &Telegram{
-		bot:         bot,
-		postRepo:    postRepo,
-		userRepo:    userRepo,
-		uploadRepo:  uploadRepo,
-		postActions: make(chan entity.PostAction),
-	}
-	go tgUC.postActionQueue()
-	go tgUC.EventListener()
-	return tgUC, nil
-}
-
 func (t *Telegram) botProcessForwardedMessage(update tgbotapi.Update) error {
 	channel := update.Message.ForwardFromChat
 	if !channel.IsChannel() {
@@ -278,7 +374,6 @@ func (t *Telegram) botProcessForwardedMessage(update tgbotapi.Update) error {
 
 func (t *Telegram) handleCommands(update tgbotapi.Update) error {
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, "")
-
 	switch update.Message.Command() {
 	case "start":
 		msg.Text = "Привет! Я бот, управляющий телеграм-каналами пользователей Postic. " +
@@ -338,10 +433,11 @@ func (t *Telegram) handleCommands(update tgbotapi.Update) error {
 
 func (t *Telegram) botProcessUpdate(update tgbotapi.Update) error {
 	if update.Message != nil && update.Message.ForwardFromChat != nil && update.Message.Chat.IsPrivate() {
-		// Пересланное сообщение
+		// Пересланное сообщение из канала лично боту
 		return t.botProcessForwardedMessage(update)
 	}
-	if update.Message != nil && update.Message.ForwardFrom != nil {
+	if update.Message != nil && update.Message.ForwardFrom != nil && update.Message.Chat.IsPrivate() {
+		// Пересланное сообщение лично боту
 		_, err := t.bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "❌ Сообщение переслано не из канала"))
 		return err
 	}
@@ -349,10 +445,93 @@ func (t *Telegram) botProcessUpdate(update tgbotapi.Update) error {
 		// Обработка команд
 		return t.handleCommands(update)
 	}
+	// Reply на пост в канале или редактирование этого reply - это комментарий, который нужно сохранить и отправить подписчикам
+	if update.Message != nil && update.Message.ReplyToMessage != nil && !update.Message.Chat.IsPrivate() {
+		// Проверяем, есть ли у нас такой канал
+		log.Infof("Update: %v", update)
+		_, err := t.channelRepo.GetTGChannelByDiscussionId(int(update.Message.Chat.ID))
+		if err != nil {
+			// ничего не делаем, просто игнорируем сообщение, если оно не относится к нашим каналам
+			return nil
+		}
+		postTGID, err := t.postRepo.GetPostTGByMessageID(update.Message.ReplyToMessage.ForwardFromMessageID)
+		if err != nil {
+			log.Errorf("Failed to get post_tg: %v", err)
+			return err
+		}
+		// Создаём комментарий
+		comment := &entity.TelegramComment{
+			PostTGID:  postTGID,
+			CommentID: update.Message.MessageID,
+			UserID:    int(update.Message.From.ID),
+			Text:      update.Message.Text,
+			CreatedAt: update.Message.Time(),
+		}
+		log.Infof("New comment: %v", comment)
+		// Если есть аттачи, то прикрепляем их к комментарию
+		if len(update.Message.Photo) > 0 {
+			comment.Attachments = make([]entity.TelegramMessageAttachment, 0, len(update.Message.Photo))
+			for _, photo := range update.Message.Photo {
+				comment.Attachments = append(comment.Attachments, entity.TelegramMessageAttachment{
+					FileID:    photo.FileID,
+					CommentID: update.Message.MessageID,
+					FileType:  "photo",
+				})
+			}
+		}
+		if update.Message.Video != nil {
+			comment.Attachments = append(comment.Attachments, entity.TelegramMessageAttachment{
+				FileID:    update.Message.Video.FileID,
+				CommentID: update.Message.MessageID,
+				FileType:  "video",
+			})
+		}
+		if update.Message.Document != nil {
+			comment.Attachments = append(comment.Attachments, entity.TelegramMessageAttachment{
+				FileID:    update.Message.Document.FileID,
+				CommentID: update.Message.MessageID,
+				FileType:  "document",
+			})
+		}
+		if update.Message.Audio != nil {
+			comment.Attachments = append(comment.Attachments, entity.TelegramMessageAttachment{
+				FileID:    update.Message.Audio.FileID,
+				CommentID: update.Message.MessageID,
+				FileType:  "audio",
+			})
+		}
+		if update.Message.Voice != nil {
+			comment.Attachments = append(comment.Attachments, entity.TelegramMessageAttachment{
+				FileID:    update.Message.Voice.FileID,
+				CommentID: update.Message.MessageID,
+				FileType:  "voice",
+			})
+		}
+		if update.Message.Sticker != nil {
+			comment.Attachments = append(comment.Attachments, entity.TelegramMessageAttachment{
+				FileID:    update.Message.Sticker.FileID,
+				CommentID: update.Message.MessageID,
+				FileType:  "sticker",
+			})
+		}
+		// Если так вышло, что у сообщения нет текста и аттачей, то игнорируем его
+		if comment.Text == "" && len(comment.Attachments) == 0 {
+			return nil
+		}
+		// Сохраняем комментарий
+		tgCommentId, err := t.commentRepo.AddTGComment(comment)
+		if err != nil {
+			log.Errorf("Failed to save comment: %v", err)
+			return err
+		}
+		comment.ID = tgCommentId
+		// Отправляем комментарий подписчикам
+		t.notifySubscribers(comment)
+	}
 	return nil
 }
 
-func (t *Telegram) EventListener() {
+func (t *Telegram) eventListener() {
 	lastUpdateID, err := t.postRepo.GetLastUpdateTG()
 	for err != nil {
 		// Пытаемся постоянно получить последний event
@@ -360,7 +539,6 @@ func (t *Telegram) EventListener() {
 		time.Sleep(1 * time.Second)
 		lastUpdateID, err = t.postRepo.GetLastUpdateTG()
 	}
-
 	u := tgbotapi.NewUpdate(lastUpdateID + 1)
 	u.Timeout = 60
 	updates := t.bot.GetUpdatesChan(u)

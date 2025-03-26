@@ -8,10 +8,8 @@ type Message struct {
 	Username string `json:"username"`
 	Time     string `json:"time"`
 	// Platform - платформа, с которой отправлен комментарий ("vk", "tg")
-	Platform   string `json:"platform"`
-	AvatarURL  string `json:"avatar_url"`
-	Text       string `json:"text"`
-	ReplyToUrl string `json:"reply_to_url"`
+	Platform string `json:"platform"`
+	Text     string `json:"text"`
 }
 
 type ClientMessage struct {

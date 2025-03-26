@@ -49,9 +49,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Ошибка при создании репозитория Upload: %v", err)
 	}
+	commentRepo := cockroach.NewComment(DBConn)
+	channelRepo := cockroach.NewChannel(DBConn)
 
 	// запускаем сервисы usecase (бизнес-логика)
-	telegramUseCase, err := service.NewTelegram(telegramBotToken, postRepo, userRepo, uploadRepo)
+	telegramUseCase, err := service.NewTelegram(telegramBotToken, postRepo, userRepo, uploadRepo, commentRepo, channelRepo)
 	if err != nil {
 		log.Fatalf("Ошибка при создании сервиса Telegram (возможно, бот занят или предоставлен невалидный токен): %v", err)
 	}
@@ -64,6 +66,7 @@ func main() {
 	postDelivery := delivery.NewPost(cookieManager, postUseCase)
 	userDelivery := delivery.NewUser(userUseCase, cookieManager)
 	uploadDelivery := delivery.NewUpload(uploadUseCase, userUseCase, cookieManager)
+	commentDelivery := delivery.NewComment(telegramUseCase)
 
 	// REST API
 	echoServer := echo.New()
@@ -83,6 +86,9 @@ func main() {
 	// uploads
 	uploads := api.Group("/upload")
 	uploadDelivery.Configure(uploads)
+	// comments
+	comments := api.Group("/comment")
+	commentDelivery.Configure(comments)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer stop()

@@ -17,6 +17,16 @@ func NewPost(db *sqlx.DB) repo.Post {
 	return &PostDB{db: db}
 }
 
+func (p *PostDB) GetPostTGByMessageID(messageID int) (int, error) {
+	var postTGID int
+	query := `SELECT id FROM post_tg WHERE post_id = $1`
+	err := p.db.Get(&postTGID, query, messageID)
+	if err != nil {
+		return 0, err
+	}
+	return postTGID, nil
+}
+
 func (p *PostDB) GetLastUpdateTG() (int, error) {
 	var lastUpdate int
 	query := `SELECT last_update_id FROM tg_bot_state WHERE id = 1`

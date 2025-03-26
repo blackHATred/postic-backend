@@ -20,3 +20,10 @@ type User struct {
 	ID     int    `json:"id" db:"id"`
 	Secret string `json:"secret" db:"secret"`
 }
+
+type PlatformUser struct {
+	UserID   int    `json:"user_id"`
+	Platform string `json:"platform"`
+	Name     string `json:"name"`
+	Nickname string `json:"nickname"`
+}

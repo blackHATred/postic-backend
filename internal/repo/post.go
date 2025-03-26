@@ -35,4 +35,6 @@ type Post interface {
 	AddPostVK(postUnionID, postID int) error
 	// AddPostTG добавляет пост в Телеграм
 	AddPostTG(postUnionID, postID int) error
+	// GetPostTGByMessageID возвращает айди поста в Телеграм по его идентификатору
+	GetPostTGByMessageID(messageID int) (int, error)
 }

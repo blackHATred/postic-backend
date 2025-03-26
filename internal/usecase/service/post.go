@@ -12,11 +12,11 @@ import (
 type Post struct {
 	postRepo        repo.Post
 	userRepo        repo.User
-	telegramUseCase usecase.Platform
-	vkUseCase       usecase.Platform
+	telegramUseCase usecase.Telegram
+	vkUseCase       usecase.Vkontakte
 }
 
-func NewPost(postRepo repo.Post, userRepo repo.User, telegram, vk usecase.Platform) usecase.Post {
+func NewPost(postRepo repo.Post, userRepo repo.User, telegram usecase.Telegram, vk usecase.Vkontakte) usecase.Post {
 	return &Post{
 		postRepo:        postRepo,
 		userRepo:        userRepo,
@@ -77,7 +77,7 @@ func (p *Post) AddPost(request *entity.AddPostRequest) (int, error) {
 			ErrMessage:  "",
 			CreatedAt:   time.Now(),
 		}
-		if err = p.telegramUseCase.AddPostInQueue(tgAddPostAction); err != nil {
+		if err = p.telegramUseCase.AddPostInQueue(&tgAddPostAction); err != nil {
 			return 0, err
 		}
 	}
