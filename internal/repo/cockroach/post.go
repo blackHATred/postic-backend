@@ -17,14 +17,14 @@ func NewPost(db *sqlx.DB) repo.Post {
 	return &PostDB{db: db}
 }
 
-func (p *PostDB) GetPostTGByMessageID(messageID int) (int, error) {
-	var postTGID int
-	query := `SELECT id FROM post_tg WHERE post_id = $1`
-	err := p.db.Get(&postTGID, query, messageID)
+func (p *PostDB) GetPostTGByMessageID(messageID int) (*entity.PostTG, error) {
+	var postTG entity.PostTG
+	query := `SELECT id, post_union_id, post_id FROM post_tg WHERE post_id = $1`
+	err := p.db.Get(&postTG, query, messageID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return postTGID, nil
+	return &postTG, nil
 }
 
 func (p *PostDB) GetLastUpdateTG() (int, error) {

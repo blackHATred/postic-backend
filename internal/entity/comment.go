@@ -17,6 +17,8 @@ type TelegramComment struct {
 	ID int `json:"id" db:"id"`
 	// PostTGID является уникальным идентификатором поста в Telegram, под которым был оставлен комментарий
 	PostTGID int `json:"post_tg_id" db:"post_tg_id"`
+	// PostUnionID является уникальным идентификатором поста во всех платформах
+	PostUnionID int `json:"post_union_id" db:"post_union_id"`
 	// CommentID является уникальным идентификатором комментария в Telegram
 	CommentID int `json:"comment_id" db:"comment_id"`
 	// UserID является ID профиля пользователя, который оставил комментарий

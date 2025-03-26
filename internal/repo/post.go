@@ -5,7 +5,7 @@ import (
 )
 
 type Post interface {
-	// PostUnion
+	// PostUnionId
 
 	// GetPostsByUserID возвращает список агрегированных постов по ID пользователя
 	GetPostsByUserID(userID int) ([]*entity.PostUnion, error)
@@ -35,6 +35,6 @@ type Post interface {
 	AddPostVK(postUnionID, postID int) error
 	// AddPostTG добавляет пост в Телеграм
 	AddPostTG(postUnionID, postID int) error
-	// GetPostTGByMessageID возвращает айди поста в Телеграм по его идентификатору
-	GetPostTGByMessageID(messageID int) (int, error)
+	// GetPostTGByMessageID возвращает пост в Телеграм по его идентификатору
+	GetPostTGByMessageID(messageID int) (*entity.PostTG, error)
 }

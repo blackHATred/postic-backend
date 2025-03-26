@@ -32,6 +32,12 @@ type PostAction struct {
 	CreatedAt   time.Time `db:"created_at"`
 }
 
+type PostTG struct {
+	ID          int `db:"id"`
+	PostUnionId int `db:"post_union_id"`
+	PostId      int `db:"post_id"`
+}
+
 type GetPostsResponse struct {
 	Posts []PostUnion `json:"posts"`
 }

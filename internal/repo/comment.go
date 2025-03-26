@@ -6,7 +6,7 @@ import (
 )
 
 type Comment interface {
-	// GetLastComments возвращает последние комментарии к посту
+	// GetLastComments возвращает последние комментарии к посту со всех платформ
 	GetLastComments(postUnionID int, limit int) ([]*entity.JustTextComment, error)
 	// GetTGComments возвращает комментарии к посту
 	GetTGComments(postUnionID int, offset time.Time, limit int) ([]*entity.TelegramComment, error)

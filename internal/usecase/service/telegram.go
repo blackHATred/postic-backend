@@ -237,7 +237,7 @@ func (t *Telegram) post(action *entity.PostAction) {
 		return
 	}
 	var newPost tgbotapi.Message
-	log.Printf("TG POST: PostUnion: %v\n", postUnion)
+	log.Printf("TG POST: PostUnionId: %v\n", postUnion)
 	// Публикуем пост
 	switch {
 	// Один медиафайл
@@ -488,7 +488,7 @@ func (t *Telegram) botProcessUpdate(update tgbotapi.Update) error {
 			// ничего не делаем, просто игнорируем сообщение, если оно не относится к нашим каналам
 			return nil
 		}
-		postTGID, err := t.postRepo.GetPostTGByMessageID(update.Message.ReplyToMessage.ForwardFromMessageID)
+		postTg, err := t.postRepo.GetPostTGByMessageID(update.Message.ReplyToMessage.ForwardFromMessageID)
 		if err != nil {
 			log.Errorf("Failed to get post_tg: %v", err)
 			return err
@@ -505,12 +505,12 @@ func (t *Telegram) botProcessUpdate(update tgbotapi.Update) error {
 		if len(photos.Photos) > 0 {
 			avatarFileID = photos.Photos[0][0].FileID
 		}
-
 		// Создаём комментарий
 		comment := &entity.TelegramComment{
-			PostTGID:  postTGID,
-			CommentID: update.Message.MessageID,
-			UserID:    int(update.Message.From.ID),
+			PostTGID:    postTg.ID,
+			PostUnionID: postTg.PostUnionId,
+			CommentID:   update.Message.MessageID,
+			UserID:      int(update.Message.From.ID),
 			User: entity.TelegramUser{
 				ID:          int(update.Message.From.ID),
 				Username:    update.Message.From.UserName,

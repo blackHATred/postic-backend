@@ -19,11 +19,10 @@ func NewComment(db *sqlx.DB) repo.Comment {
 
 func (c *Comment) GetLastComments(postUnionID int, limit int) ([]*entity.JustTextComment, error) {
 	rows, err := c.db.Queryx(`
-		SELECT c.text
-		FROM post_tg_comment c
-		JOIN post_tg p ON c.post_tg_id = p.id
-		WHERE p.post_union_id = $1
-		ORDER BY c.created_at DESC
+		SELECT text
+		FROM post_tg_comment
+		WHERE post_union_id = $1
+		ORDER BY created_at DESC
 		LIMIT $2
 	`, postUnionID, limit)
 	if err != nil {
@@ -50,7 +49,7 @@ func (c *Comment) GetTGComments(postUnionID int, offset time.Time, limit int) ([
 	rows, err := c.db.Queryx(`
 	SELECT id, post_tg_id, comment_id, user_id, text, created_at
 	FROM post_tg_comment
-	WHERE post_tg_id = (SELECT id FROM post_tg WHERE post_union_id = $1)
+	WHERE post_union_id = $1
 	AND created_at > $2
 	ORDER BY created_at ASC
 	LIMIT $3
@@ -125,11 +124,11 @@ func (c *Comment) AddTGComment(comment *entity.TelegramComment) (int, error) {
 
 	var commentID int
 	query := `
-		INSERT INTO post_tg_comment (post_tg_id, comment_id, user_id, text, created_at)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO post_tg_comment (post_tg_id, post_union_id, comment_id, user_id, text, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id
 	`
-	err = c.db.QueryRow(query, comment.PostTGID, comment.CommentID, comment.User.ID, comment.Text, comment.CreatedAt).Scan(&commentID)
+	err = c.db.QueryRow(query, comment.PostTGID, comment.PostUnionID, comment.CommentID, comment.User.ID, comment.Text, comment.CreatedAt).Scan(&commentID)
 	if err != nil {
 		return 0, err
 	}
