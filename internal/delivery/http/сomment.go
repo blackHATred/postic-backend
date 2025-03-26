@@ -37,24 +37,8 @@ func NewComment(cookiesManager *utils.CookieManager, tgUseCase usecase.Telegram,
 
 func (c *Comment) Configure(server *echo.Group) {
 	server.GET("/ws", c.handleWSConnection)
-	server.GET("/user/tg/:id", c.getTGUserInfo)
 	server.GET("/summarize/:id", c.getSummarize)
-}
-
-func (c *Comment) getTGUserInfo(ctx echo.Context) error {
-	userID, err := strconv.Atoi(ctx.Param("id"))
-	if err != nil {
-		return ctx.JSON(http.StatusBadRequest, echo.Map{
-			"error": "неверный формат id пользователя",
-		})
-	}
-	user, err := c.tgUseCase.GetUser(userID)
-	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, echo.Map{
-			"error": err.Error(),
-		})
-	}
-	return ctx.JSON(http.StatusOK, user)
+	server.GET("/tg_user_avatar/:id", c.getTGUserAvatar)
 }
 
 func (c *Comment) handleWSConnection(ctx echo.Context) error {
@@ -164,4 +148,28 @@ func (c *Comment) getSummarize(ctx echo.Context) error {
 		})
 	}
 	return ctx.JSON(http.StatusOK, summarize)
+}
+
+func (c *Comment) getTGUserAvatar(ctx echo.Context) error {
+	userID, err := strconv.Atoi(ctx.Param("id"))
+	if err != nil {
+		return ctx.JSON(http.StatusBadRequest, echo.Map{
+			"error": "неверный формат id пользователя",
+		})
+	}
+	avatar, err := c.tgUseCase.GetUserAvatar(userID)
+	if err != nil {
+		return ctx.JSON(http.StatusInternalServerError, echo.Map{
+			"error": err.Error(),
+		})
+	}
+	mediaType := http.DetectContentType(avatar)
+	ctx.Response().Header().Set(echo.HeaderContentType, mediaType)
+	_, err = ctx.Response().Write(avatar)
+	if err != nil {
+		return ctx.JSON(http.StatusInternalServerError, echo.Map{
+			"error": err.Error(),
+		})
+	}
+	return nil
 }

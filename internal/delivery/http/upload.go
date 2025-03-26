@@ -7,6 +7,7 @@ import (
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/usecase"
+	"strconv"
 )
 
 type Upload struct {
@@ -25,6 +26,7 @@ func NewUpload(uploadUseCase usecase.Upload, userUseCase usecase.User, cookiesMa
 
 func (u *Upload) Configure(server *echo.Group) {
 	server.POST("/", u.Upload)
+	server.GET("/get/:id", u.GetFile)
 }
 
 func (u *Upload) Upload(c echo.Context) error {
@@ -85,4 +87,28 @@ func (u *Upload) Upload(c echo.Context) error {
 	return c.JSON(http.StatusOK, echo.Map{
 		"file_id": fileID,
 	})
+}
+
+func (u *Upload) GetFile(c echo.Context) error {
+	// Извлекаем из куки айди пользователя
+	userID, err := u.cookiesManager.GetUserIDFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	}
+	fileID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат id файла",
+		})
+	}
+
+	file, err := u.uploadUseCase.GetUpload(fileID, userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Ошибка получения файла: " + err.Error(),
+		})
+	}
+	return c.Blob(http.StatusOK, http.DetectContentType(file.RawBytes), file.RawBytes)
 }

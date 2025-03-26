@@ -1,6 +1,8 @@
 package entity
 
-import "time"
+import (
+	"time"
+)
 
 type AddPostRequest struct {
 	UserId int
@@ -16,7 +18,7 @@ type PostUnion struct {
 	Text        string    `db:"text"`
 	Platforms   []string  `db:"platforms"`
 	PubDate     time.Time `db:"pub_datetime"`
-	Attachments []int     `db:"attachments"`
+	Attachments []Upload  `db:"attachments"`
 	CreatedAt   time.Time `db:"created_at"`
 	UserID      int       `db:"user_id"`
 }

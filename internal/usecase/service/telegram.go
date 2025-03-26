@@ -23,8 +23,40 @@ type Telegram struct {
 	commentRepo repo.Comment
 	channelRepo repo.Channel
 	postActions chan *entity.PostAction
-	subscribers map[chan *entity.TelegramComment]struct{}
+	subscribers map[chan *entity.TelegramComment]int
 	mu          sync.Mutex
+}
+
+func (t *Telegram) GetUserAvatar(userID int) ([]byte, error) {
+	// Получаем аватар пользователя
+	avatar, err := t.bot.GetUserProfilePhotos(tgbotapi.UserProfilePhotosConfig{
+		UserID: int64(userID),
+		Limit:  1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(avatar.Photos) == 0 {
+		return nil, fmt.Errorf("user has no photos")
+	}
+	// Получаем информацию о файле аватара
+	fileID := avatar.Photos[0][0].FileID
+	file, err := t.bot.GetFile(tgbotapi.FileConfig{FileID: fileID})
+	if err != nil {
+		return nil, err
+	}
+	// Получаем содержимое файла
+	url := file.Link(t.bot.Token)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	avatarBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return avatarBytes, nil
 }
 
 func (t *Telegram) GetRawAttachment(attachmentID int) (*entity.TelegramMessageAttachment, error) {
@@ -67,18 +99,18 @@ func NewTelegram(token string, postRepo repo.Post, userRepo repo.User, uploadRep
 		commentRepo: commentRepo,
 		channelRepo: channelRepo,
 		postActions: make(chan *entity.PostAction),
-		subscribers: make(map[chan *entity.TelegramComment]struct{}),
+		subscribers: make(map[chan *entity.TelegramComment]int),
 	}
 	go tgUC.postActionQueue()
 	go tgUC.eventListener()
 	return tgUC, nil
 }
 
-func (t *Telegram) Subscribe(userID int) chan *entity.TelegramComment {
+func (t *Telegram) Subscribe(postUnionId int) chan *entity.TelegramComment {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	ch := make(chan *entity.TelegramComment)
-	t.subscribers[ch] = struct{}{}
+	t.subscribers[ch] = postUnionId
 	return ch
 }
 
@@ -210,7 +242,7 @@ func (t *Telegram) post(action *entity.PostAction) {
 	switch {
 	// Один медиафайл
 	case len(postUnion.Attachments) == 1:
-		upload, err := t.uploadRepo.GetUpload(postUnion.Attachments[0])
+		upload, err := t.uploadRepo.GetUpload(postUnion.Attachments[0].ID)
 		if err != nil {
 			log.Errorf("TG POST: GetUpload failed: %v", err)
 			return
@@ -251,7 +283,11 @@ func (t *Telegram) post(action *entity.PostAction) {
 		}
 	// От 2 до 10 картинок или видео
 	case len(postUnion.Attachments) > 1 && len(postUnion.Attachments) <= 10:
-		mediaGroup, err := t.getMediaGroup(postUnion.Attachments, postUnion.Text)
+		attachIDs := make([]int, 0, len(postUnion.Attachments))
+		for _, attachment := range postUnion.Attachments {
+			attachIDs = append(attachIDs, attachment.ID)
+		}
+		mediaGroup, err := t.getMediaGroup(attachIDs, postUnion.Text)
 		if err != nil {
 			log.Errorf("TG POST: getMediaGroup failed: %v", err)
 			return

@@ -64,8 +64,11 @@ func (p *PostDB) GetPostsByUserID(userID int) ([]*entity.PostUnion, error) {
 		post.Platforms = strings.Split(string(platforms[1:len(platforms)-1]), ",")
 
 		// Fetch attachments for the post
-		var attachments []int
-		attachmentsQuery := `SELECT mediafile_id FROM post_union_mediafile WHERE post_union_id = $1`
+		var attachments []entity.Upload
+		attachmentsQuery := `SELECT mf.id, mf.file_path, mf.file_type, mf.uploaded_by_user_id, mf.created_at
+	FROM post_union_mediafile pum
+	JOIN mediafile mf ON pum.mediafile_id = mf.id
+	WHERE pum.post_union_id = $1`
 		err = p.db.Select(&attachments, attachmentsQuery, post.ID)
 		if err != nil {
 			log.Printf("GetPostsByUserID: %v", err)
@@ -93,14 +96,17 @@ func (p *PostDB) GetPostUnion(postUnionID int) (*entity.PostUnion, error) {
 	post.Platforms = platforms
 
 	// Fetch attachments for the post
-	var attachments []int
-	attachmentsQuery := `SELECT mediafile_id FROM post_union_mediafile WHERE post_union_id = $1`
+	var attachments []entity.Upload
+	attachmentsQuery := `SELECT mf.id, mf.file_path, mf.file_type, mf.uploaded_by_user_id, mf.created_at
+	FROM post_union_mediafile pum
+	JOIN mediafile mf ON pum.mediafile_id = mf.id
+	WHERE pum.post_union_id = $1`
 	err = p.db.Select(&attachments, attachmentsQuery, post.ID)
 	if err != nil {
+		log.Printf("GetPostsByUserID: %v", err)
 		return nil, err
 	}
 	post.Attachments = attachments
-
 	return &post, nil
 }
 
@@ -122,10 +128,14 @@ func (p *PostDB) GetPostUnions(userID int) ([]*entity.PostUnion, error) {
 		post.Platforms = platforms
 
 		// Fetch attachments for the post
-		var attachments []int
-		attachmentsQuery := `SELECT mediafile_id FROM post_union_mediafile WHERE post_union_id = $1`
+		var attachments []entity.Upload
+		attachmentsQuery := `SELECT mf.id, mf.file_path, mf.file_type, mf.uploaded_by_user_id, mf.created_at
+	FROM post_union_mediafile pum
+	JOIN mediafile mf ON pum.mediafile_id = mf.id
+	WHERE pum.post_union_id = $1`
 		err = p.db.Select(&attachments, attachmentsQuery, post.ID)
 		if err != nil {
+			log.Printf("GetPostsByUserID: %v", err)
 			return nil, err
 		}
 		post.Attachments = attachments
@@ -160,7 +170,7 @@ func (p *PostDB) AddPostUnion(union *entity.PostUnion) (int, error) {
 
 	for _, attachment := range union.Attachments {
 		query = `INSERT INTO post_union_mediafile (post_union_id, mediafile_id) VALUES ($1, $2)`
-		_, err = tx.Exec(query, postUnionID, attachment)
+		_, err = tx.Exec(query, postUnionID, attachment.ID)
 		if err != nil {
 			errRollback := tx.Rollback()
 			if errRollback != nil {

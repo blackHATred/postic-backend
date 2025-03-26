@@ -50,11 +50,15 @@ func (p *Post) AddPost(request *entity.AddPostRequest) (int, error) {
 		return 0, errors.New("no attachments and no text")
 	}
 	// сначала создаем запись об агрегированном посте
+	var attachments []entity.Upload
+	for _, attachmentID := range request.Attachments {
+		attachments = append(attachments, entity.Upload{ID: attachmentID})
+	}
 	postUnionID, err := p.postRepo.AddPostUnion(
 		&entity.PostUnion{
 			Text:        request.Text,
 			PubDate:     time.Unix(int64(request.PubTime), 0),
-			Attachments: request.Attachments,
+			Attachments: attachments,
 			Platforms:   request.Platforms,
 			CreatedAt:   time.Now(),
 			UserID:      request.UserId,
