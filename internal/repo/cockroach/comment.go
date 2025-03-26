@@ -37,15 +37,18 @@ func (c *Comment) GetTGComments(postUnionID int, offset time.Time, limit int) ([
 		if err := rows.StructScan(&comment); err != nil {
 			return nil, err
 		}
-		comments = append(comments, &comment)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
 
-	for _, comment := range comments {
+		// Load user data
+		var user entity.TelegramUser
+		err = c.db.Get(&user, `SELECT user_id, username, first_name, last_name, photo_file_id FROM tg_user WHERE user_id = $1`, comment.UserID)
+		if err != nil {
+			return nil, err
+		}
+		comment.User = user
+
+		// Load attachments
 		var attachments []entity.TelegramMessageAttachment
-		rows, err := c.db.Queryx(`
+		attachmentRows, err := c.db.Queryx(`
 		SELECT id, comment_id, file_type, file_id
 		FROM post_tg_comment_attachment
 		WHERE comment_id = $1
@@ -53,32 +56,51 @@ func (c *Comment) GetTGComments(postUnionID int, offset time.Time, limit int) ([
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
+		defer attachmentRows.Close()
 
-		for rows.Next() {
+		for attachmentRows.Next() {
 			var attachment entity.TelegramMessageAttachment
-			if err := rows.StructScan(&attachment); err != nil {
+			if err := attachmentRows.StructScan(&attachment); err != nil {
 				return nil, err
 			}
 			attachments = append(attachments, attachment)
 		}
-		if err := rows.Err(); err != nil {
+		if err := attachmentRows.Err(); err != nil {
 			return nil, err
 		}
 		comment.Attachments = attachments
+
+		comments = append(comments, &comment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return comments, nil
 }
 
 func (c *Comment) AddTGComment(comment *entity.TelegramComment) (int, error) {
+	// Обновляем или добавляем пользователя Telegram
+	_, err := c.db.Exec(`
+		INSERT INTO tg_user (user_id, username, first_name, last_name, photo_file_id)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (user_id) DO UPDATE SET
+			username = EXCLUDED.username,
+			first_name = EXCLUDED.first_name,
+			last_name = EXCLUDED.last_name,
+			photo_file_id = EXCLUDED.photo_file_id
+	`, comment.User.ID, comment.User.Username, comment.User.FirstName, comment.User.LastName, comment.User.PhotoFileID)
+	if err != nil {
+		return 0, err
+	}
+
 	var commentID int
 	query := `
 		INSERT INTO post_tg_comment (post_tg_id, comment_id, user_id, text, created_at)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
 	`
-	err := c.db.QueryRow(query, comment.PostTGID, comment.CommentID, comment.UserID, comment.Text, comment.CreatedAt).Scan(&commentID)
+	err = c.db.QueryRow(query, comment.PostTGID, comment.CommentID, comment.User.ID, comment.Text, comment.CreatedAt).Scan(&commentID)
 	if err != nil {
 		return 0, err
 	}

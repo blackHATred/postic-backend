@@ -7,6 +7,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/gommon/log"
 	"net/http"
+	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/usecase"
 	"strconv"
@@ -21,12 +22,14 @@ var upgrader = websocket.Upgrader{
 }
 
 type Comment struct {
-	tgUseCase usecase.Telegram
+	cookiesManager *utils.CookieManager
+	tgUseCase      usecase.Telegram
 }
 
-func NewComment(tgUseCase usecase.Telegram) *Comment {
+func NewComment(cookiesManager *utils.CookieManager, tgUseCase usecase.Telegram) *Comment {
 	return &Comment{
-		tgUseCase: tgUseCase,
+		cookiesManager: cookiesManager,
+		tgUseCase:      tgUseCase,
 	}
 }
 
@@ -52,12 +55,19 @@ func (c *Comment) getTGUserInfo(ctx echo.Context) error {
 }
 
 func (c *Comment) handleWSConnection(ctx echo.Context) error {
+	userID, err := c.cookiesManager.GetUserIDFromContext(ctx)
+	if err != nil {
+		log.Info(err)
+		return ctx.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	}
 	ws, err := upgrader.Upgrade(ctx.Response(), ctx.Request(), nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = ws.Close() }()
-	newCommentsChan := c.tgUseCase.Subscribe()
+	newCommentsChan := c.tgUseCase.Subscribe(userID)
 	done := make(chan struct{})
 
 	go func() {

@@ -14,6 +14,7 @@ import (
 	"postic-backend/internal/repo/cockroach"
 	"postic-backend/internal/usecase/service"
 	"postic-backend/pkg/connector"
+	"strings"
 	"time"
 )
 
@@ -66,7 +67,7 @@ func main() {
 	postDelivery := delivery.NewPost(cookieManager, postUseCase)
 	userDelivery := delivery.NewUser(userUseCase, cookieManager)
 	uploadDelivery := delivery.NewUpload(uploadUseCase, userUseCase, cookieManager)
-	commentDelivery := delivery.NewComment(telegramUseCase)
+	commentDelivery := delivery.NewComment(cookieManager, telegramUseCase)
 
 	// REST API
 	echoServer := echo.New()
@@ -74,6 +75,33 @@ func main() {
 	// echoServer.Server.ReadHeaderTimeout = time.Duration(coreParams.HTTP.Server.ReadTimeout) * time.Second
 	// echoServer.Server.WriteTimeout = time.Duration(coreParams.HTTP.Server.WriteTimeout) * time.Second
 	// echoServer.Server.IdleTimeout = time.Duration(coreParams.HTTP.Server.ReadTimeout) * time.Second
+
+	// CORS
+	echoServer.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(ctx echo.Context) error {
+			ctx.Response().Header().Set(echo.HeaderAccessControlAllowOrigin, "localhost:3000")
+			ctx.Response().Header().Set(echo.HeaderAccessControlAllowMethods, strings.Join([]string{
+				http.MethodGet,
+				http.MethodPut,
+				http.MethodPost,
+				http.MethodDelete,
+				http.MethodOptions,
+			}, ","))
+			ctx.Response().Header().Set(echo.HeaderAccessControlAllowHeaders, strings.Join([]string{
+				echo.HeaderOrigin,
+				echo.HeaderAccept,
+				echo.HeaderXRequestedWith,
+				echo.HeaderContentType,
+				echo.HeaderAccessControlRequestMethod,
+				echo.HeaderAccessControlRequestHeaders,
+				echo.HeaderCookie,
+				"X-Csrf",
+			}, ","))
+			ctx.Response().Header().Set(echo.HeaderAccessControlAllowCredentials, "true")
+			ctx.Response().Header().Set(echo.HeaderAccessControlMaxAge, "86400")
+			return next(ctx)
+		}
+	})
 
 	// Endpoints
 	api := echoServer.Group("/api")

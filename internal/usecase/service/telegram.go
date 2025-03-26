@@ -16,16 +16,15 @@ import (
 )
 
 type Telegram struct {
-	bot          *tgbotapi.BotAPI
-	postRepo     repo.Post
-	userRepo     repo.User
-	uploadRepo   repo.Upload
-	commentRepo  repo.Comment
-	channelRepo  repo.Channel
-	commentsChan chan *entity.Comment
-	postActions  chan *entity.PostAction
-	subscribers  map[chan *entity.TelegramComment]struct{}
-	mu           sync.Mutex
+	bot         *tgbotapi.BotAPI
+	postRepo    repo.Post
+	userRepo    repo.User
+	uploadRepo  repo.Upload
+	commentRepo repo.Comment
+	channelRepo repo.Channel
+	postActions chan *entity.PostAction
+	subscribers map[chan *entity.TelegramComment]struct{}
+	mu          sync.Mutex
 }
 
 func (t *Telegram) GetRawAttachment(attachmentID int) (*entity.TelegramMessageAttachment, error) {
@@ -61,22 +60,21 @@ func NewTelegram(token string, postRepo repo.Post, userRepo repo.User, uploadRep
 	bot.Debug = true
 	log.Infof("Authorized on account %s", bot.Self.UserName)
 	tgUC := &Telegram{
-		bot:          bot,
-		postRepo:     postRepo,
-		userRepo:     userRepo,
-		uploadRepo:   uploadRepo,
-		commentRepo:  commentRepo,
-		channelRepo:  channelRepo,
-		commentsChan: make(chan *entity.Comment),
-		postActions:  make(chan *entity.PostAction),
-		subscribers:  make(map[chan *entity.TelegramComment]struct{}),
+		bot:         bot,
+		postRepo:    postRepo,
+		userRepo:    userRepo,
+		uploadRepo:  uploadRepo,
+		commentRepo: commentRepo,
+		channelRepo: channelRepo,
+		postActions: make(chan *entity.PostAction),
+		subscribers: make(map[chan *entity.TelegramComment]struct{}),
 	}
 	go tgUC.postActionQueue()
 	go tgUC.eventListener()
 	return tgUC, nil
 }
 
-func (t *Telegram) Subscribe() chan *entity.TelegramComment {
+func (t *Telegram) Subscribe(userID int) chan *entity.TelegramComment {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	ch := make(chan *entity.TelegramComment)
@@ -459,11 +457,31 @@ func (t *Telegram) botProcessUpdate(update tgbotapi.Update) error {
 			log.Errorf("Failed to get post_tg: %v", err)
 			return err
 		}
+		// Получаем айди файла аватарки пользователя
+		photos, err := t.bot.GetUserProfilePhotos(tgbotapi.UserProfilePhotosConfig{
+			UserID: update.Message.From.ID,
+			Limit:  1,
+		})
+		if err != nil {
+			return err
+		}
+		var avatarFileID string
+		if len(photos.Photos) > 0 {
+			avatarFileID = photos.Photos[0][0].FileID
+		}
+
 		// Создаём комментарий
 		comment := &entity.TelegramComment{
 			PostTGID:  postTGID,
 			CommentID: update.Message.MessageID,
 			UserID:    int(update.Message.From.ID),
+			User: entity.TelegramUser{
+				ID:          int(update.Message.From.ID),
+				Username:    update.Message.From.UserName,
+				FirstName:   update.Message.From.FirstName,
+				LastName:    update.Message.From.LastName,
+				PhotoFileID: avatarFileID,
+			},
 			Text:      update.Message.Text,
 			CreatedAt: update.Message.Time(),
 		}

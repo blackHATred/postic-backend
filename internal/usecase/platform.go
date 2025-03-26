@@ -15,7 +15,7 @@ type Telegram interface {
 	// GetUser возвращает пользователя Telegram по его идентификатору
 	GetUser(userID int) (*entity.PlatformUser, error)
 	// Subscribe возвращает канал для подписки на новые комментарии
-	Subscribe() chan *entity.TelegramComment
+	Subscribe(userID int) chan *entity.TelegramComment
 	// Unsubscribe отписывает канал от новых комментариев
 	Unsubscribe(ch chan *entity.TelegramComment)
 }

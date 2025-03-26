@@ -45,10 +45,38 @@ func (p *PostDB) SetLastUpdateTG(updateID int) error {
 
 func (p *PostDB) GetPostsByUserID(userID int) ([]*entity.PostUnion, error) {
 	var posts []*entity.PostUnion
-	query := `SELECT * FROM post_union WHERE user_id = $1`
-	err := p.db.Select(&posts, query, userID)
+	query := `SELECT id, user_id, text, platforms, created_at, pub_datetime FROM post_union WHERE user_id = $1`
+	rows, err := p.db.Queryx(query, userID)
 	if err != nil {
-		log.Error("GetPostsByUserID: ", err)
+		log.Printf("GetPostsByUserID: %v", err)
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var post entity.PostUnion
+		var platforms []byte
+		if err := rows.Scan(&post.ID, &post.UserID, &post.Text, &platforms, &post.CreatedAt, &post.PubDate); err != nil {
+			log.Printf("GetPostsByUserID: %v", err)
+			return nil, err
+		}
+		// Convert platforms from []byte to []string
+		post.Platforms = strings.Split(string(platforms[1:len(platforms)-1]), ",")
+
+		// Fetch attachments for the post
+		var attachments []int
+		attachmentsQuery := `SELECT mediafile_id FROM post_union_mediafile WHERE post_union_id = $1`
+		err = p.db.Select(&attachments, attachmentsQuery, post.ID)
+		if err != nil {
+			log.Printf("GetPostsByUserID: %v", err)
+			return nil, err
+		}
+		post.Attachments = attachments
+
+		posts = append(posts, &post)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("GetPostsByUserID: %v", err)
 		return nil, err
 	}
 	return posts, nil
