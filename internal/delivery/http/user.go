@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"github.com/labstack/echo/v4"
 	"net/http"
 	"postic-backend/internal/delivery/http/utils"
@@ -11,19 +12,21 @@ import (
 
 type User struct {
 	userUseCase   usecase.User
-	cookieManager *utils.CookieManager
+	authManager   utils.Auth
+	cookieManager utils.Cookie
 }
 
-func NewUser(userUseCase usecase.User, cookieManager *utils.CookieManager) *User {
+func NewUser(userUseCase usecase.User, authManager utils.Auth, cookieManager utils.Cookie) *User {
 	return &User{
 		userUseCase:   userUseCase,
+		authManager:   authManager,
 		cookieManager: cookieManager,
 	}
 }
 
 func (u *User) Configure(server *echo.Group) {
 	server.POST("/register", u.Register)
-	server.POST("/login", u.Login)
+	server.GET("/login", u.Login)
 	server.GET("/me", u.Me)
 	server.PUT("/set/vk", u.SetVK)
 }
@@ -31,55 +34,61 @@ func (u *User) Configure(server *echo.Group) {
 func (u *User) Register(c echo.Context) error {
 	userID, err := u.userUseCase.Register()
 	if err != nil {
+		c.Logger().Errorf("Ошибка при регистрации пользователя: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": err.Error(),
+			"error": "Произошла непредвиденная ошибка",
 		})
 	}
-	// Куки на год
+	token, err := u.authManager.CreateToken(userID)
+	if err != nil {
+		c.Logger().Errorf("Ошибка при создании токена: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Произошла непредвиденная ошибка",
+		})
+	}
 	expires := time.Now().AddDate(1, 0, 0)
-	c.SetCookie(u.cookieManager.NewUserIDCookie(userID, expires))
+	c.SetCookie(u.cookieManager.SetSessionCookie(token, expires))
 	return c.JSON(http.StatusOK, echo.Map{
 		"user_id": userID,
 	})
 }
 
 func (u *User) Login(c echo.Context) error {
-	// Извлекаем из запроса айди, под которым хочет войти юзер. Пароли пока не проверяем
-	loginRequest := &entity.LoginRequest{}
+	var loginRequest entity.LoginRequest
 	err := utils.ReadJSON(c, &loginRequest)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
 			"error": "Неверный формат запроса",
 		})
 	}
-	userID, err := u.userUseCase.Login(loginRequest.UserID)
+	token, err := u.authManager.Login(loginRequest.UserID)
 	if err != nil {
+		c.Logger().Errorf("Ошибка при авторизации пользователя: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": err.Error(),
+			"error": "Произошла непредвиденная ошибка",
 		})
 	}
-	// Куки на год
-	expires := time.Now().AddDate(1, 0, 0)
-	c.SetCookie(u.cookieManager.NewUserIDCookie(userID, expires))
 	return c.JSON(http.StatusOK, echo.Map{
-		"user_id": userID,
+		"token": token,
 	})
 }
 
 func (u *User) Me(c echo.Context) error {
-	userID, err := u.cookieManager.GetUserIDFromContext(c)
-	if err != nil {
+	userId, err := u.authManager.CheckAuthFromContext(c)
+	switch {
+	case errors.Is(err, utils.ErrUnauthorized):
 		return c.JSON(http.StatusUnauthorized, echo.Map{
 			"error": "Пользователь не авторизован",
 		})
-	}
-	user, err := u.userUseCase.GetUser(userID)
-	if err != nil {
+	case err != nil:
+		c.Logger().Errorf("Ошибка при проверке авторизации пользователя: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": err.Error(),
+			"error": "Произошла непредвиденная ошибка",
 		})
 	}
-	return c.JSON(http.StatusOK, user)
+	return c.JSON(http.StatusOK, echo.Map{
+		"user_id": userId,
+	})
 }
 
 func (u *User) SetVK(c echo.Context) error {
@@ -91,16 +100,23 @@ func (u *User) SetVK(c echo.Context) error {
 			"error": "Неверный формат запроса",
 		})
 	}
-	userID, err := u.cookieManager.GetUserIDFromContext(c)
-	if err != nil {
+	userId, err := u.authManager.CheckAuthFromContext(c)
+	switch {
+	case errors.Is(err, utils.ErrUnauthorized):
 		return c.JSON(http.StatusUnauthorized, echo.Map{
 			"error": "Пользователь не авторизован",
 		})
-	}
-	err = u.userUseCase.SetVK(userID, vkRequest.GroupID, vkRequest.APIKey)
-	if err != nil {
+	case err != nil:
+		c.Logger().Errorf("Ошибка при проверке авторизации пользователя: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": err.Error(),
+			"error": "Произошла непредвиденная ошибка",
+		})
+	}
+	err = u.userUseCase.SetVK(userId, vkRequest.GroupID, vkRequest.APIKey)
+	if err != nil {
+		c.Logger().Errorf("Ошибка при установке группы ВК: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Произошла непредвиденная ошибка",
 		})
 	}
 	return c.JSON(http.StatusOK, echo.Map{

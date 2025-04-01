@@ -16,12 +16,12 @@ type Post interface {
 	// AddPostUnion добавляет агрегированный пост
 	AddPostUnion(*entity.PostUnion) (int, error)
 
-	// PostAction
+	// AddPostAction
 
 	// GetPostAction возвращает действие на создание поста
-	GetPostAction(postUnionID int, platform string, last bool) (*entity.PostAction, error)
+	GetPostAction(postUnionID int, platform string, last bool) (*entity.AddPostAction, error)
 	// AddPostAction добавляет действие на создание поста
-	AddPostAction(*entity.PostAction) (int, error)
+	AddPostAction(*entity.AddPostAction) (int, error)
 	// EditPostActionStatus изменяет статус действия на создание поста
 	EditPostActionStatus(postUnionID int, status, errorMessage string) error
 

@@ -74,7 +74,7 @@ func (p *Post) AddPost(request *entity.AddPostRequest) (int, error) {
 	}
 	if slices.Contains(request.Platforms, "tg") {
 		// запускаем подзадачу на публикацию
-		tgAddPostAction := entity.PostAction{
+		tgAddPostAction := entity.AddPostAction{
 			PostUnionID: postUnionID,
 			Platform:    "tg",
 			Status:      "pending",

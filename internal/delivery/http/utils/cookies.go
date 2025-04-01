@@ -1,41 +1,30 @@
 package utils
 
 import (
-	"github.com/labstack/echo/v4"
 	"net/http"
-	"strconv"
 	"time"
 )
+
+type Cookie interface {
+	SetSessionCookie(token string, expires time.Time) *http.Cookie
+}
 
 type CookieManager struct {
 	secureCookies bool
 }
 
-func NewCookieManager(secureCookies bool) *CookieManager {
+func NewCookieManager(secureCookies bool) Cookie {
 	return &CookieManager{secureCookies: secureCookies}
 }
 
-func (c *CookieManager) NewUserIDCookie(userID int, expires time.Time) *http.Cookie {
+func (c *CookieManager) SetSessionCookie(token string, expires time.Time) *http.Cookie {
 	cookie := http.Cookie{
 		Name:     "session",
-		Value:    strconv.Itoa(userID),
+		Value:    token,
 		Expires:  expires,
 		HttpOnly: true,
 		Secure:   c.secureCookies,
 		Path:     "/",
 	}
 	return &cookie
-}
-
-func (c *CookieManager) GetUserIDFromContext(ctx echo.Context) (int, error) {
-	// Потом нужно будет сделать нормальную проверку на авторизацию
-	cookie, err := ctx.Cookie("session")
-	if err != nil {
-		return -1, err
-	}
-	userID, err := strconv.Atoi(cookie.Value)
-	if err != nil {
-		return -1, err
-	}
-	return userID, nil
 }

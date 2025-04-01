@@ -22,9 +22,31 @@ type Telegram struct {
 	uploadRepo  repo.Upload
 	commentRepo repo.Comment
 	channelRepo repo.Channel
-	postActions chan *entity.PostAction
+	postActions chan *entity.AddPostAction
 	subscribers map[chan *entity.TelegramComment]int
 	mu          sync.Mutex
+}
+
+func NewTelegram(token string, postRepo repo.Post, userRepo repo.User, uploadRepo repo.Upload, commentRepo repo.Comment, channelRepo repo.Channel) (usecase.Telegram, error) {
+	bot, err := tgbotapi.NewBotAPI(token)
+	if err != nil {
+		return nil, err
+	}
+	bot.Debug = true
+	log.Infof("Authorized on account %s", bot.Self.UserName)
+	tgUC := &Telegram{
+		bot:         bot,
+		postRepo:    postRepo,
+		userRepo:    userRepo,
+		uploadRepo:  uploadRepo,
+		commentRepo: commentRepo,
+		channelRepo: channelRepo,
+		postActions: make(chan *entity.AddPostAction),
+		subscribers: make(map[chan *entity.TelegramComment]int),
+	}
+	go tgUC.postActionQueue()
+	go tgUC.eventListener()
+	return tgUC, nil
 }
 
 func (t *Telegram) GetUserAvatar(userID int) ([]byte, error) {
@@ -82,28 +104,6 @@ func (t *Telegram) GetRawAttachment(attachmentID int) (*entity.TelegramMessageAt
 	}
 	attachment.RawBytes = fileBytes
 	return attachment, nil
-}
-
-func NewTelegram(token string, postRepo repo.Post, userRepo repo.User, uploadRepo repo.Upload, commentRepo repo.Comment, channelRepo repo.Channel) (usecase.Telegram, error) {
-	bot, err := tgbotapi.NewBotAPI(token)
-	if err != nil {
-		return nil, err
-	}
-	bot.Debug = true
-	log.Infof("Authorized on account %s", bot.Self.UserName)
-	tgUC := &Telegram{
-		bot:         bot,
-		postRepo:    postRepo,
-		userRepo:    userRepo,
-		uploadRepo:  uploadRepo,
-		commentRepo: commentRepo,
-		channelRepo: channelRepo,
-		postActions: make(chan *entity.PostAction),
-		subscribers: make(map[chan *entity.TelegramComment]int),
-	}
-	go tgUC.postActionQueue()
-	go tgUC.eventListener()
-	return tgUC, nil
 }
 
 func (t *Telegram) Subscribe(postUnionId int) chan *entity.TelegramComment {
@@ -165,7 +165,7 @@ func (t *Telegram) GetUser(userID int) (*entity.PlatformUser, error) {
 	return user, nil
 }
 
-func (t *Telegram) AddPostInQueue(postAction *entity.PostAction) error {
+func (t *Telegram) AddPostInQueue(postAction *entity.AddPostAction) error {
 	t.postActions <- postAction
 	return nil
 }
@@ -219,7 +219,7 @@ func (t *Telegram) getMediaGroup(attachments []int, caption string) ([]any, erro
 	return mediaGroup, nil
 }
 
-func (t *Telegram) post(action *entity.PostAction) {
+func (t *Telegram) post(action *entity.AddPostAction) {
 	// Создаём действие на создание поста
 	postActionID, err := t.postRepo.AddPostAction(action)
 	if err != nil {

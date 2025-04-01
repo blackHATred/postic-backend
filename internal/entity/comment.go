@@ -56,3 +56,18 @@ type TelegramMessageAttachment struct {
 type JustTextComment struct {
 	Text string `json:"text" db:"text"`
 }
+
+type Comment struct {
+	ID                int    `json:"id" db:"id"`
+	PostUnionID       int    `json:"post_union_id" db:"post_union_id"`
+	Platform          string `json:"platform" db:"platform"`
+	PostPlatformID    int    `json:"post_platform_id" db:"post_platform_id"`
+	UserPlatformID    int    `json:"user_platform_id" db:"user_platform_id"`
+	CommentPlatformID int    `json:"comment_platform_id" db:"comment_platform_id"`
+	FullName          string `json:"full_name" db:"full_name"`
+	Username          string `json:"username" db:"username"`
+	AvatarMediafileID int    `json:"avatar_mediafile_id" db:"avatar_mediafile_id"`
+	Text              string `json:"text" db:"text"`
+	CreatedAt         int    `json:"created_at" db:"created_at"`
+	Attachments       []int  `json:"attachments" db:"attachments"`
+}

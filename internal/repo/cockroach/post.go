@@ -188,8 +188,8 @@ func (p *PostDB) AddPostUnion(union *entity.PostUnion) (int, error) {
 	return postUnionID, nil
 }
 
-func (p *PostDB) GetPostAction(postUnionID int, platform string, last bool) (*entity.PostAction, error) {
-	var action entity.PostAction
+func (p *PostDB) GetPostAction(postUnionID int, platform string, last bool) (*entity.AddPostAction, error) {
+	var action entity.AddPostAction
 	query := `SELECT * FROM post_action WHERE post_union_id = $1 AND platform = $2 ORDER BY created_at DESC LIMIT 1`
 	err := p.db.Get(&action, query, postUnionID, platform)
 	if err != nil {
@@ -198,7 +198,7 @@ func (p *PostDB) GetPostAction(postUnionID int, platform string, last bool) (*en
 	return &action, nil
 }
 
-func (p *PostDB) AddPostAction(action *entity.PostAction) (int, error) {
+func (p *PostDB) AddPostAction(action *entity.AddPostAction) (int, error) {
 	var postActionID int
 	query := `INSERT INTO post_action (post_union_id, platform, status, error_message, created_at) 
 			  VALUES ($1, $2, $3, $4, $5) RETURNING id`

@@ -14,22 +14,28 @@ type AddPostRequest struct {
 }
 
 type PostUnion struct {
-	ID          int       `db:"id"`
-	Text        string    `db:"text"`
-	Platforms   []string  `db:"platforms"`
-	PubDate     time.Time `db:"pub_datetime"`
-	Attachments []Upload  `db:"attachments"`
-	CreatedAt   time.Time `db:"created_at"`
-	UserID      int       `db:"user_id"`
+	ID          int        `db:"id"`
+	Text        string     `db:"text"`
+	Platforms   []string   `db:"platforms"`
+	PubDate     *time.Time `db:"pub_datetime"`
+	Attachments []Upload   `db:"attachments"`
+	CreatedAt   time.Time  `db:"created_at"`
+	UserID      int        `db:"user_id"`
 }
 
-type PostAction struct {
+type AddPostAction struct {
 	ID          int       `db:"id"`
 	PostUnionID int       `db:"post_union_id"`
 	Platform    string    `db:"platform"`
 	Status      string    `db:"status"`
 	ErrMessage  string    `db:"error_message"`
 	CreatedAt   time.Time `db:"created_at"`
+}
+
+type EditPostAction struct {
+}
+
+type DeletePostAction struct {
 }
 
 type PostTG struct {

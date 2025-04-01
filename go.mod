@@ -4,7 +4,9 @@ go 1.24.0
 
 require (
 	github.com/SevereCloud/vksdk/v3 v3.1.0
+	github.com/go-resty/resty/v2 v2.16.5
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/joho/godotenv v1.5.1

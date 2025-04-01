@@ -12,3 +12,8 @@ migration-file:
 .PHONY: run-docker-compose
 run-docker-compose:
 	docker compose up --build -d
+
+.PHONY: install-foliant
+install-foliant:
+	pip3 install foliant foliantcontrib.init
+	pip3 install foliantcontrib.pandoc
