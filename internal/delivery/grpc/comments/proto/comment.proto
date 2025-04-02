@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+option go_package = "./;comments";
+
+package comments;
+
+message AffectedComment {
+  int64 id = 1;
+}
+
+message Nothing {}
+
+message SubscribeRequest {
+  int64 team_id = 1;
+  int64 post_union_id = 2; // если 0, то подписываемся на всю ленту комментариев
+}
+
+// Клиент подписывается на изменения в комментариях, передавая ID команды
+service Comments {
+  rpc Subscribe(SubscribeRequest) returns (stream AffectedComment);
+}

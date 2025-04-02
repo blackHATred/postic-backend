@@ -53,32 +53,42 @@ func (u Upload) GetUpload(id int) (*entity.Upload, error) {
 	if err != nil {
 		return nil, err
 	}
-	objInfo, err := object.Stat()
-	if err != nil {
-		return nil, err
-	}
-	upload.RawBytes = make([]byte, objInfo.Size)
-	_, err = io.ReadFull(object, upload.RawBytes)
-	if err != nil {
-		return nil, err
-	}
+	upload.RawBytes = object
 	return upload, nil
 }
 
 func (u Upload) UploadFile(upload *entity.Upload) (int, error) {
 	// Добавляем файл в S3 хранилище и создаём запись в БД
 	ctx := context.TODO()
-	reader := bytes.NewReader(upload.RawBytes)
-	mediaType := http.DetectContentType(upload.RawBytes)
-	_, err := u.minioClient.PutObject(ctx, "user-uploads", upload.FilePath, reader, int64(len(upload.RawBytes)), minio.PutObjectOptions{
-		ContentType: mediaType,
-	})
+	rawBytes, err := io.ReadAll(upload.RawBytes)
+	if err != nil {
+		return 0, err
+	}
+	// так как считали все байты, то нужно создать новый буфер - будем считать это допустимым оверхедом
+	upload.RawBytes = bytes.NewBuffer(rawBytes)
+	mediaType := http.DetectContentType(rawBytes)
+	_, err = u.minioClient.PutObject(
+		ctx,
+		"mediafiles",
+		upload.FilePath,
+		upload.RawBytes,
+		int64(len(rawBytes)),
+		minio.PutObjectOptions{
+			ContentType: mediaType,
+		},
+	)
 	if err != nil {
 		return 0, err
 	}
 	var uploadID int
-	query := `INSERT INTO mediafile (file_path, file_type, uploaded_by_user_id) VALUES ($1, $2, $3) RETURNING id`
-	err = u.db.QueryRow(query, upload.FilePath, upload.FileType, upload.UserID).Scan(&uploadID)
+	if upload.UserID == 0 {
+		// Если загрузка не привязана к пользователю, то просто добавляем в БД
+		query := `INSERT INTO mediafile (file_path, file_type) VALUES ($1, $2) RETURNING id`
+		err = u.db.QueryRow(query, upload.FilePath, upload.FileType).Scan(&uploadID)
+	} else {
+		query := `INSERT INTO mediafile (file_path, file_type, uploaded_by_user_id) VALUES ($1, $2, $3) RETURNING id`
+		err = u.db.QueryRow(query, upload.FilePath, upload.FileType, upload.UserID).Scan(&uploadID)
+	}
 	if err != nil {
 		return 0, err
 	}
