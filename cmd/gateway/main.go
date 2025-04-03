@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"github.com/labstack/gommon/log"
 	"net/http"
 	"os"
@@ -76,6 +77,8 @@ func main() {
 	// echoServer.Server.ReadHeaderTimeout = time.Duration(coreParams.HTTP.Server.ReadTimeout) * time.Second
 	// echoServer.Server.WriteTimeout = time.Duration(coreParams.HTTP.Server.WriteTimeout) * time.Second
 	// echoServer.Server.IdleTimeout = time.Duration(coreParams.HTTP.Server.ReadTimeout) * time.Second
+
+	echoServer.Use(middleware.RequestID())
 
 	// CORS
 	echoServer.Use(func(next echo.HandlerFunc) echo.HandlerFunc {

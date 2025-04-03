@@ -25,12 +25,12 @@ func NewPost(postRepo repo.Post, userRepo repo.User, telegram usecase.Telegram, 
 	}
 }
 
-func (p *Post) GetPostStatus(postID int, platform string) (*entity.GetPostStatusResponse, error) {
+func (p *Post) GetPostStatus(postID int, platform string) (*entity.PostStatusResponse, error) {
 	action, err := p.postRepo.GetPostAction(postID, platform, true)
 	if err != nil {
 		return nil, err
 	}
-	return &entity.GetPostStatusResponse{
+	return &entity.PostStatusResponse{
 		PostID:     postID,
 		Platform:   platform,
 		Status:     action.Status,

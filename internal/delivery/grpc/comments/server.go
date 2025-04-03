@@ -8,10 +8,10 @@ import (
 
 type Grpc struct {
 	commentsProto.UnimplementedCommentsServer
-	telegramEventListener usecase.TelegramListener
+	telegramEventListener usecase.Listener
 }
 
-func NewGrpc(telegramEventListener usecase.TelegramListener) *Grpc {
+func NewGrpc(telegramEventListener usecase.Listener) *Grpc {
 	return &Grpc{telegramEventListener: telegramEventListener}
 }
 

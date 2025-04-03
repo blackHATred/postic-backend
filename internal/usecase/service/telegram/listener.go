@@ -39,7 +39,7 @@ func NewEventListener(
 	postRepo repo.Post,
 	uploadRepo repo.Upload,
 	commentRepo repo.Comment,
-) (usecase.TelegramListener, error) {
+) (usecase.Listener, error) {
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err

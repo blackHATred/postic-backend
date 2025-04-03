@@ -38,7 +38,7 @@ func NewUpload(db *sqlx.DB, minioClient *minio.Client) (repo.Upload, error) {
 	}, nil
 }
 
-func (u Upload) GetUpload(id int) (*entity.Upload, error) {
+func (u *Upload) GetUpload(id int) (*entity.Upload, error) {
 	// Получаем upload из БД, потом загружаем его из S3
 	upload := &entity.Upload{}
 	query := `SELECT * FROM mediafile WHERE id = $1`
@@ -57,7 +57,17 @@ func (u Upload) GetUpload(id int) (*entity.Upload, error) {
 	return upload, nil
 }
 
-func (u Upload) UploadFile(upload *entity.Upload) (int, error) {
+func (u *Upload) GetUploadInfo(id int) (*entity.Upload, error) {
+	upload := &entity.Upload{}
+	query := `SELECT * FROM mediafile WHERE id = $1`
+	err := u.db.Get(upload, query, id)
+	if err != nil {
+		return nil, err
+	}
+	return upload, err
+}
+
+func (u *Upload) UploadFile(upload *entity.Upload) (int, error) {
 	// Добавляем файл в S3 хранилище и создаём запись в БД
 	ctx := context.TODO()
 	rawBytes, err := io.ReadAll(upload.RawBytes)
