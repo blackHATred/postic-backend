@@ -11,10 +11,10 @@ import (
 
 type Post struct {
 	cookiesManager *utils.CookieManager
-	postUseCase    usecase.Post
+	postUseCase    usecase.PostPlatform
 }
 
-func NewPost(cookiesManager *utils.CookieManager, postUseCase usecase.Post) *Post {
+func NewPost(cookiesManager *utils.CookieManager, postUseCase usecase.PostPlatform) *Post {
 	return &Post{
 		cookiesManager: cookiesManager,
 		postUseCase:    postUseCase,

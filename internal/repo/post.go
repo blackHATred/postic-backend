@@ -12,11 +12,15 @@ type Post interface {
 	// EditPostUnion редактирует агрегированный пост
 	EditPostUnion(*entity.PostUnion) error
 
-	GetPostAction()
-	AddPostAction() (int, error)
-	EditPostAction() error
+	// GetPostAction возвращает действие по ID
+	GetPostAction(postActionID int) (*entity.PostAction, error)
+	// AddPostAction добавляет действие к посту и возвращает его айди
+	AddPostAction(postAction *entity.PostAction) (int, error)
+	// EditPostAction редактирует действие
+	EditPostAction(postAction *entity.PostAction) error
 
 	GetPostPlatform()
-	AddPostPlatform() (int, error)
+	// AddPostPlatform добавляет связанную с PostUnion запись про пост, опубликованный на платформе
+	AddPostPlatform(postPlatform *entity.PostPlatform) (int, error)
 	DeletePostPlatform() error
 }

@@ -13,6 +13,25 @@ func NewTeam(db *sqlx.DB) repo.Team {
 	return &Team{db: db}
 }
 
+func (t *Team) GetTGChannelByTeamID(teamId int) (int, error) {
+	var channelId int
+	err := t.db.Get(&channelId, "SELECT channel_id FROM channel_tg WHERE team_id = $1", teamId)
+	if err != nil {
+		return 0, err
+	}
+	return channelId, nil
+}
+
+func (t *Team) GetUserPermissionsByTeamID(teamId int, userId int) ([]repo.UserTeamRole, error) {
+	var roles []repo.UserTeamRole
+	query := "SELECT roles FROM team_user_role WHERE team_id = $1 AND user_id = $2"
+	err := t.db.Select(&roles, query, teamId, userId)
+	if err != nil {
+		return nil, err
+	}
+	return roles, nil
+}
+
 func (t *Team) GetTeamIDBySecret(secret string) (int, error) {
 	var teamID int
 	err := t.db.Get(&teamID, "SELECT id FROM team WHERE secret = $1", secret)

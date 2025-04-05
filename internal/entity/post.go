@@ -1,6 +1,7 @@
 package entity
 
 import (
+	"errors"
 	"time"
 )
 
@@ -21,10 +22,46 @@ type AddPostRequest struct {
 	UserID int
 	TeamID int
 	Text   string `json:"text"`
-	// PubTime указывается в UNIX timestamp UTC +0
-	PubTime     int      `json:"pub_time"`
+	// PubDateTime указывается в UNIX timestamp UTC +0
+	PubDateTime int      `json:"pub_datetime"`
 	Attachments []int    `json:"attachments"`
 	Platforms   []string `json:"platforms"`
+}
+
+func (r *AddPostRequest) IsValid() error {
+	if r.Text == "" && len(r.Attachments) == 0 {
+		return errors.New("text and attachments are empty")
+	}
+	// Запас в 5 минут сделан намеренно с целью предотвратить возможные издержки.
+	// С точки зрения usecase добавлять пост в очередь на публикацию в прошлом или раннее чем через 5 минут
+	// не имеет смысла
+	if int64(r.PubDateTime) < time.Now().Add(5*time.Minute).Unix() {
+		return errors.New("pub_datetime must be in the future")
+	}
+	if len(r.Platforms) == 0 {
+		return errors.New("platforms are empty")
+	}
+	for _, platform := range r.Platforms {
+		if platform == "tg" && len(r.Attachments) == 0 && len(r.Text) > 4096 {
+			return errors.New("text is too long for telegram")
+		}
+		if platform == "tg" && len(r.Attachments) > 0 && len(r.Text) > 1024 {
+			return errors.New("text is too long for telegram with attachments")
+		}
+		if platform == "vk" && len(r.Text) > 16384 {
+			return errors.New("text is too long for vkontakte")
+		}
+		if platform == "fb" && len(r.Text) > 63206 {
+			return errors.New("text is too long for facebook")
+		}
+		if platform == "ok" && len(r.Text) > 32000 {
+			return errors.New("text is too long for odnoklassniki")
+		}
+		if platform == "ig" && len(r.Text) > 2200 {
+			return errors.New("text is too long for instagram")
+		}
+	}
+	return nil
 }
 
 type EditPostRequest struct {

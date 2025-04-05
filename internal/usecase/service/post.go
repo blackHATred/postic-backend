@@ -16,7 +16,7 @@ type Post struct {
 	vkUseCase       usecase.Vkontakte
 }
 
-func NewPost(postRepo repo.Post, userRepo repo.User, telegram usecase.Telegram, vk usecase.Vkontakte) usecase.Post {
+func NewPost(postRepo repo.Post, userRepo repo.User, telegram usecase.Telegram, vk usecase.Vkontakte) usecase.PostPlatform {
 	return &Post{
 		postRepo:        postRepo,
 		userRepo:        userRepo,
@@ -57,7 +57,7 @@ func (p *Post) AddPost(request *entity.AddPostRequest) (int, error) {
 	postUnionID, err := p.postRepo.AddPostUnion(
 		&entity.PostUnion{
 			Text:        request.Text,
-			PubDate:     time.Unix(int64(request.PubTime), 0),
+			PubDate:     time.Unix(int64(request.PubDateTime), 0),
 			Attachments: attachments,
 			Platforms:   request.Platforms,
 			CreatedAt:   time.Now(),
@@ -90,7 +90,7 @@ func (p *Post) AddPost(request *entity.AddPostRequest) (int, error) {
 }
 
 /*
-func (p *Post) postToVK(postUnionID int) {
+func (p *PostPlatform) postToVK(postUnionID int) {
 	// создаём новое действие
 	postActionID, err := p.postRepo.AddPostActionVK(postUnionID)
 	if err != nil {

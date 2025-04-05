@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS post_union (
     FOREIGN KEY (user_id) REFERENCES "user" (id) ON DELETE CASCADE,
     team_id INT NOT NULL,
     FOREIGN KEY (team_id) REFERENCES team (id) ON DELETE CASCADE,
-    text STRING(1024), -- может быть NULL только в том случае, если есть mediafile
+    text STRING(64000), -- может быть NULL только в том случае, если есть mediafile
     platforms STRING(32)[] NOT NULL DEFAULT '{}', -- vk / tg / etc
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     pub_datetime TIMESTAMP DEFAULT NULL-- запланированное время публикации; если NULL, то публикуется немедленно
