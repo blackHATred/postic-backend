@@ -12,15 +12,15 @@ type GetPostRequest struct {
 }
 
 type GetPostsRequest struct {
-	UserID int
-	TeamID int
+	UserID int `json:"-"`
+	TeamID int `json:"team_id"`
 	Offset int `json:"offset"`
 	Limit  int `json:"-"`
 }
 
 type AddPostRequest struct {
-	UserID int
-	TeamID int
+	UserID int    `json:"-"`
+	TeamID int    `json:"team_id"`
 	Text   string `json:"text"`
 	// PubDateTime указывается в UNIX timestamp UTC +0
 	PubDateTime int      `json:"pub_datetime"`
@@ -119,8 +119,8 @@ type PostPlatform struct {
 
 type PostStatusRequest struct {
 	UserID      int
-	TeamID      int
-	PostUnionID int `db:"post_union_id"`
+	TeamID      int `json:"team_id"`
+	PostUnionID int `json:"post_union_id" db:"post_union_id"`
 }
 
 type PostActionResponse struct {
@@ -128,4 +128,11 @@ type PostActionResponse struct {
 	Platform   string `json:"platform"`
 	Status     string `json:"status"`
 	ErrMessage string `json:"err_message"`
+}
+
+type ScheduledPost struct {
+	PostUnionID int       `json:"post_union_id" db:"post_union_id"`
+	ScheduledAt time.Time `json:"scheduled_at" db:"scheduled_at"`
+	Status      string    `json:"status" db:"status"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 }

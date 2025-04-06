@@ -6,29 +6,28 @@ import (
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/usecase"
-	"strconv"
 )
 
 type Post struct {
-	cookiesManager *utils.CookieManager
-	postUseCase    usecase.PostPlatform
+	authManager utils.Auth
+	postUseCase usecase.PostUnion
 }
 
-func NewPost(cookiesManager *utils.CookieManager, postUseCase usecase.PostPlatform) *Post {
+func NewPost(authManager utils.Auth, postUseCase usecase.PostUnion) *Post {
 	return &Post{
-		cookiesManager: cookiesManager,
-		postUseCase:    postUseCase,
+		authManager: authManager,
+		postUseCase: postUseCase,
 	}
 }
 
 func (p *Post) Configure(server *echo.Group) {
 	server.POST("/add", p.AddPost)
 	server.GET("/list", p.GetPosts)
-	server.GET("/status/:id", p.GetPostStatus)
+	server.GET("/status", p.GetPostStatus)
 }
 
 func (p *Post) AddPost(c echo.Context) error {
-	userID, err := p.cookiesManager.GetUserIDFromContext(c)
+	userID, err := p.authManager.CheckAuthFromContext(c)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, echo.Map{
 			"error": "Пользователь не авторизован",
@@ -42,9 +41,9 @@ func (p *Post) AddPost(c echo.Context) error {
 			"error": "Неверный формат запроса",
 		})
 	}
-	request.UserId = userID
+	request.UserID = userID
 
-	postId, err := p.postUseCase.AddPost(request)
+	postId, actionIDs, err := p.postUseCase.AddPostUnion(request)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{
 			"error": err.Error(),
@@ -52,20 +51,30 @@ func (p *Post) AddPost(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, echo.Map{
-		"status":  "ok",
-		"post_id": postId,
+		"status":    "ok",
+		"actionIDs": actionIDs,
+		"post_id":   postId,
 	})
 }
 
 func (p *Post) GetPosts(c echo.Context) error {
-	userID, err := p.cookiesManager.GetUserIDFromContext(c)
+	userID, err := p.authManager.CheckAuthFromContext(c)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, echo.Map{
 			"error": "Пользователь не авторизован",
 		})
 	}
 
-	posts, err := p.postUseCase.GetPosts(userID)
+	request := &entity.GetPostsRequest{}
+	err = utils.ReadJSON(c, request)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат запроса",
+		})
+	}
+	request.UserID = userID
+	request.Limit = 10
+	posts, err := p.postUseCase.GetPosts(request)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{
 			"error": err.Error(),
@@ -78,20 +87,21 @@ func (p *Post) GetPosts(c echo.Context) error {
 }
 
 func (p *Post) GetPostStatus(c echo.Context) error {
-	postID := c.Param("id")
-	id, err := strconv.Atoi(postID)
+	userID, err := p.authManager.CheckAuthFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	}
+	request := &entity.PostStatusRequest{}
+	err = utils.ReadJSON(c, request)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
-			"error": "Неверный ID поста",
+			"error": "Неверный формат запроса",
 		})
 	}
-	platform := c.QueryParam("platform")
-	if platform == "" {
-		return c.JSON(http.StatusBadRequest, echo.Map{
-			"error": "Не указана платформа (query-param platform)",
-		})
-	}
-	status, err := p.postUseCase.GetPostStatus(id, platform)
+	request.UserID = userID
+	status, err := p.postUseCase.GetPostStatus(request)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{
 			"error": err.Error(),

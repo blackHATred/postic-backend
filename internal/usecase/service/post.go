@@ -9,123 +9,119 @@ import (
 	"time"
 )
 
-type Post struct {
-	postRepo        repo.Post
-	userRepo        repo.User
-	telegramUseCase usecase.Telegram
-	vkUseCase       usecase.Vkontakte
+type PostUnion struct {
+	postRepo   repo.Post
+	teamRepo   repo.Team
+	uploadRepo repo.Upload
+	telegram   usecase.PostPlatform
 }
 
-func NewPost(postRepo repo.Post, userRepo repo.User, telegram usecase.Telegram, vk usecase.Vkontakte) usecase.PostPlatform {
-	return &Post{
-		postRepo:        postRepo,
-		userRepo:        userRepo,
-		telegramUseCase: telegram,
-		vkUseCase:       vk,
+func NewPostUnion(
+	postRepo repo.Post,
+	teamRepo repo.Team,
+	uploadRepo repo.Upload,
+	telegram usecase.PostPlatform,
+) usecase.PostUnion {
+	// todo: запустить отдельную горутину, которая по тикеру будет смотреть запланированные публикации и осуществлять их
+	return &PostUnion{
+		postRepo:   postRepo,
+		teamRepo:   teamRepo,
+		uploadRepo: uploadRepo,
+		telegram:   telegram,
 	}
 }
 
-func (p *Post) GetPostStatus(postID int, platform string) (*entity.PostStatusResponse, error) {
-	action, err := p.postRepo.GetPostAction(postID, platform, true)
+func (p *PostUnion) AddPostUnion(request *entity.AddPostRequest) (int, []int, error) {
+	// Проверяем, что пользователь админ или имеет отдельное право на публикации
+	permissions, err := p.teamRepo.GetUserPermissionsByTeamID(request.TeamID, request.UserID)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
-	return &entity.PostStatusResponse{
-		PostID:     postID,
-		Platform:   platform,
-		Status:     action.Status,
-		ErrMessage: action.ErrMessage,
-	}, nil
-}
+	if !slices.Contains(permissions, repo.AdminRole) && !slices.Contains(permissions, repo.PostsRole) {
+		return 0, nil, errors.New("user has no permission to create post")
+	}
 
-func (p *Post) GetPosts(userID int) ([]*entity.PostUnion, error) {
-	return p.postRepo.GetPostsByUserID(userID)
-}
+	// Создание записи в таблице post_union
+	pubDateTime := time.Unix(int64(request.PubDateTime), 0).UTC()
+	if pubDateTime.After(time.Now().Add(time.Hour * 24 * 365)) {
+		return 0, nil, errors.New("publication date is too far in the future")
+	}
+	// Возможен случай, когда pubDateTime <= now, тогда пост будет опубликован сразу без ошибки
+	attachments := make([]*entity.Upload, len(request.Attachments))
+	if len(request.Attachments) > 0 {
+		for i, attachment := range request.Attachments {
+			upload, err := p.uploadRepo.GetUploadInfo(attachment)
+			if err != nil {
+				return 0, nil, err
+			}
+			attachments[i] = upload
+		}
+	}
+	postUnion := &entity.PostUnion{
+		UserID:      request.UserID,
+		TeamID:      request.TeamID,
+		Text:        request.Text,
+		Platforms:   request.Platforms,
+		CreatedAt:   time.Now(),
+		PubDate:     &pubDateTime,
+		Attachments: attachments,
+	}
 
-func (p *Post) AddPost(request *entity.AddPostRequest) (int, error) {
-	if len(request.Platforms) == 0 {
-		return 0, errors.New("no platforms")
-	}
-	if len(request.Attachments) == 0 && request.Text == "" {
-		return 0, errors.New("no attachments and no text")
-	}
-	// сначала создаем запись об агрегированном посте
-	var attachments []entity.Upload
-	for _, attachmentID := range request.Attachments {
-		attachments = append(attachments, entity.Upload{ID: attachmentID})
-	}
-	postUnionID, err := p.postRepo.AddPostUnion(
-		&entity.PostUnion{
-			Text:        request.Text,
-			PubDate:     time.Unix(int64(request.PubDateTime), 0),
-			Attachments: attachments,
-			Platforms:   request.Platforms,
-			CreatedAt:   time.Now(),
-			UserID:      request.UserId,
-		},
-	)
+	postUnionID, err := p.postRepo.AddPostUnion(postUnion)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
-	// затем создаем действия на публикацию
-	if slices.Contains(request.Platforms, "vk") {
-		// запускаем подзадачу на публикацию
-		// go p.postToVK(postUnionID)
-	}
-	if slices.Contains(request.Platforms, "tg") {
-		// запускаем подзадачу на публикацию
-		tgAddPostAction := entity.AddPostAction{
+	postUnion.ID = postUnionID
+
+	// Если pubdatetime > now, то создаем запланированную публикацию
+	if pubDateTime.After(time.Now()) {
+		_, err = p.postRepo.AddScheduledPost(&entity.ScheduledPost{
 			PostUnionID: postUnionID,
-			Platform:    "tg",
+			ScheduledAt: pubDateTime,
 			Status:      "pending",
-			ErrMessage:  "",
 			CreatedAt:   time.Now(),
-		}
-		if err = p.telegramUseCase.AddPostInQueue(&tgAddPostAction); err != nil {
-			return 0, err
-		}
+		})
+		// Так как никаких действий с внешними платформами пока не произошло, то возвращаем пустой список actions
+		return postUnionID, []int{}, nil
 	}
 
-	return postUnionID, nil
+	// Если pubdatetime <= now, то на каждой из платформ создаем action
+	var actionIDs []int
+	for _, platform := range request.Platforms {
+		switch platform {
+		case "tg":
+			platformID, err := p.telegram.AddPost(postUnion)
+			if err != nil {
+				return postUnionID, actionIDs, err
+			}
+			actionIDs = append(actionIDs, platformID)
+			// todo другие платформы
+		}
+	}
+	return postUnionID, actionIDs, nil
 }
 
-/*
-func (p *PostPlatform) postToVK(postUnionID int) {
-	// создаём новое действие
-	postActionID, err := p.postRepo.AddPostActionVK(postUnionID)
-	if err != nil {
-		return
-	}
-	// получаем данные поста, который нужно опубликовать
-	postUnion, err := p.postRepo.GetPostUnion(postActionID)
-	if err != nil {
-		return
-	}
-	// получаем канал публикации
-	channel, err := p.postRepo.GetVKChannel(postUnion.UserID)
-	if err != nil {
-		return
-	}
-	// публикуем пост
-	vk := api.NewVK(channel.APIKey)
-	params := api.Params{
-		"owner_id": channel.GroupID,
-		// сделать attachments!
-		"message": postUnion.Text,
-		"guid":    postActionID, // чтобы одна и та же запись не опубликовалась дважды (если что-то пойдет не так)
-	}
-	// если дата публикации в будущем, то указываем ее в формате UNIX timestamp
-	if postUnion.PubDate.After(time.Now()) && postUnion.PubDate.Before(time.Now().Add(time.Hour*24*365)) {
-		params["publish_date"] = postUnion.PubDate.Unix()
-	}
-	response, err := vk.WallPost(params)
-	if err != nil {
-		// обновляем статус
-		_ = p.postRepo.EditPostActionVK(postActionID, "error", err.Error())
-		return
-	}
-	// обновляем статус
-	_ = p.postRepo.EditPostAction(postActionID, "success", "")
-	_ = p.postRepo.AddPostVK(postUnion.ID, response.PostID)
+func (p *PostUnion) EditPostUnion(request *entity.EditPostRequest) ([]int, error) {
+	//TODO implement me
+	panic("implement me")
 }
-*/
+
+func (p *PostUnion) DeletePostUnion(request *entity.DeletePostRequest) ([]int, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (p *PostUnion) GetPostUnion(request *entity.GetPostRequest) (*entity.PostUnion, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (p *PostUnion) GetPosts(request *entity.GetPostsRequest) ([]*entity.PostUnion, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (p *PostUnion) GetPostStatus(request *entity.PostStatusRequest) ([]*entity.PostActionResponse, error) {
+	//TODO implement me
+	panic("implement me")
+}

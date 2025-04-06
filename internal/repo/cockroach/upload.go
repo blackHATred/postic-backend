@@ -19,12 +19,12 @@ type Upload struct {
 func NewUpload(db *sqlx.DB, minioClient *minio.Client) (repo.Upload, error) {
 	// Создаем бакет для user uploads, предварительно проверив, что его нет
 	ctx := context.TODO()
-	exists, err := minioClient.BucketExists(ctx, "user-uploads")
+	exists, err := minioClient.BucketExists(ctx, "mediafiles")
 	if err != nil {
 		return nil, err
 	}
 	if !exists {
-		err = minioClient.MakeBucket(ctx, "user-uploads", minio.MakeBucketOptions{
+		err = minioClient.MakeBucket(ctx, "mediafiles", minio.MakeBucketOptions{
 			Region:        "eu-central-1", // Предположим, что мы центральные европейцы
 			ObjectLocking: true,
 		})
@@ -47,7 +47,7 @@ func (u *Upload) GetUpload(id int) (*entity.Upload, error) {
 		return nil, err
 	}
 	ctx := context.TODO()
-	object, err := u.minioClient.GetObject(ctx, "user-uploads", upload.FilePath, minio.GetObjectOptions{
+	object, err := u.minioClient.GetObject(ctx, "mediafiles", upload.FilePath, minio.GetObjectOptions{
 		Checksum: true,
 	})
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/repo/cockroach"
 	"postic-backend/internal/usecase/service"
+	"postic-backend/internal/usecase/service/telegram"
 	"postic-backend/pkg/connector"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ func main() {
 		log.Info(".env файл не обнаружен")
 	}
 	telegramBotToken := os.Getenv("TELEGRAM_BOT_TOKEN")
+	jwtSecret := os.Getenv("JWT_SECRET")
 
 	// cockroach
 	DBConn, err := connector.GetCockroachConnector("user=root dbname=defaultdb sslmode=disable port=26257") // примерный вид dsn: "user=root dbname=defaultdb sslmode=disable"
@@ -46,30 +48,32 @@ func main() {
 
 	// запускаем сервисы репозиториев (подключение к базе данных)
 	userRepo := cockroach.NewUser(DBConn)
+	teamRepo := cockroach.NewTeam(DBConn)
 	postRepo := cockroach.NewPost(DBConn)
 	uploadRepo, err := cockroach.NewUpload(DBConn, minioClient)
 	if err != nil {
 		log.Fatalf("Ошибка при создании репозитория Upload: %v", err)
 	}
-	commentRepo := cockroach.NewComment(DBConn)
-	channelRepo := cockroach.NewChannel(DBConn)
+	//commentRepo := cockroach.NewComment(DBConn)
+	//channelRepo := cockroach.NewChannel(DBConn)
 
 	// запускаем сервисы usecase (бизнес-логика)
-	telegramUseCase, err := service.NewTelegram(telegramBotToken, postRepo, userRepo, uploadRepo, commentRepo, channelRepo)
+	telegramUseCase, err := telegram.NewTelegram(telegramBotToken, postRepo, teamRepo, uploadRepo)
 	if err != nil {
-		log.Fatalf("Ошибка при создании сервиса Telegram (возможно, бот занят или предоставлен невалидный токен): %v", err)
+		log.Fatalf("Ошибка при создании Telegram UseCase: %v", err)
 	}
-	postUseCase := service.NewPost(postRepo, userRepo, telegramUseCase, nil)
+	postUseCase := service.NewPostUnion(postRepo, teamRepo, uploadRepo, telegramUseCase)
 	userUseCase := service.NewUser(userRepo)
 	uploadUseCase := service.NewUpload(uploadRepo)
-	commentUseCase := service.NewComment(commentRepo, "http://me-herbs.gl.at.ply.gg:2465/sum")
+	//commentUseCase := service.NewComment(commentRepo, "http://me-herbs.gl.at.ply.gg:2465/sum")
 
 	// запускаем сервисы delivery (обработка запросов)
 	cookieManager := utils.NewCookieManager(false)
-	postDelivery := delivery.NewPost(cookieManager, postUseCase)
-	userDelivery := delivery.NewUser(userUseCase, cookieManager)
-	uploadDelivery := delivery.NewUpload(uploadUseCase, userUseCase, cookieManager)
-	commentDelivery := delivery.NewComment(cookieManager, telegramUseCase, commentUseCase)
+	authManager := utils.NewAuthManager([]byte(jwtSecret), userRepo, time.Hour*24*365)
+	postDelivery := delivery.NewPost(authManager, postUseCase)
+	userDelivery := delivery.NewUser(userUseCase, authManager, cookieManager)
+	uploadDelivery := delivery.NewUpload(uploadUseCase, userUseCase, authManager)
+	// commentDelivery := delivery.NewComment(cookieManager, telegramUseCase, commentUseCase)
 
 	// REST API
 	echoServer := echo.New()
@@ -78,6 +82,15 @@ func main() {
 	// echoServer.Server.WriteTimeout = time.Duration(coreParams.HTTP.Server.WriteTimeout) * time.Second
 	// echoServer.Server.IdleTimeout = time.Duration(coreParams.HTTP.Server.ReadTimeout) * time.Second
 
+	// Не более 10 МБ
+	echoServer.Use(middleware.BodyLimit("10M"))
+	// gzip на прием
+	echoServer.Use(middleware.Decompress())
+	// gzip на отдачу
+	echoServer.Use(middleware.GzipWithConfig(middleware.GzipConfig{
+		Level: 5,
+	}))
+	// request id
 	echoServer.Use(middleware.RequestID())
 
 	// CORS
@@ -119,8 +132,8 @@ func main() {
 	uploads := api.Group("/upload")
 	uploadDelivery.Configure(uploads)
 	// comments
-	comments := api.Group("/comment")
-	commentDelivery.Configure(comments)
+	//comments := api.Group("/comment")
+	//commentDelivery.Configure(comments)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer stop()

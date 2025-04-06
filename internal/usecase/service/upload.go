@@ -1,10 +1,14 @@
 package service
 
 import (
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"github.com/google/uuid"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
+	"strings"
 )
 
 type Upload struct {
@@ -18,6 +22,15 @@ func NewUpload(uploadRepo repo.Upload) usecase.Upload {
 }
 
 func (u *Upload) UploadFile(upload *entity.Upload) (int, error) {
+	// переводим название файла в base64 (без учета расширения файла) и добавляем к нему префикс uuid,
+	// чтобы избежать проблем с кириллицей и пробелами
+	strings.LastIndex(upload.FilePath, ".")
+	upload.FilePath = fmt.Sprintf(
+		"%s_%s.%s",
+		uuid.New().String(),
+		base64.StdEncoding.EncodeToString([]byte(upload.FilePath)),
+		upload.FilePath[strings.LastIndex(upload.FilePath, ".")+1:],
+	)
 	return u.uploadRepo.UploadFile(upload)
 }
 

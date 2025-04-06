@@ -1,7 +1,10 @@
 package cockroach
 
 import (
+	"database/sql"
+	"errors"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"postic-backend/internal/repo"
 )
 
@@ -23,13 +26,19 @@ func (t *Team) GetTGChannelByTeamID(teamId int) (int, error) {
 }
 
 func (t *Team) GetUserPermissionsByTeamID(teamId int, userId int) ([]repo.UserTeamRole, error) {
-	var roles []repo.UserTeamRole
+	var roles []string
 	query := "SELECT roles FROM team_user_role WHERE team_id = $1 AND user_id = $2"
-	err := t.db.Select(&roles, query, teamId, userId)
-	if err != nil {
+	if err := t.db.QueryRow(query, teamId, userId).Scan(pq.Array(&roles)); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return []repo.UserTeamRole{}, nil
+		}
 		return nil, err
 	}
-	return roles, nil
+	var userRoles []repo.UserTeamRole
+	for _, role := range roles {
+		userRoles = append(userRoles, repo.UserTeamRole(role))
+	}
+	return userRoles, nil
 }
 
 func (t *Team) GetTeamIDBySecret(secret string) (int, error) {

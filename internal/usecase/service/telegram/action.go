@@ -6,6 +6,8 @@ import (
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
+	"postic-backend/pkg/retry"
+	"time"
 )
 
 type Telegram struct {
@@ -15,119 +17,230 @@ type Telegram struct {
 	uploadRepo repo.Upload
 }
 
-func NewTelegram() usecase.PostPlatform {
-	return &Telegram{}
+func NewTelegram(
+	token string,
+	postRepo repo.Post,
+	teamRepo repo.Team,
+	uploadRepo repo.Upload,
+) (usecase.PostPlatform, error) {
+	bot, err := tgbotapi.NewBotAPI(token)
+	if err != nil {
+		return nil, err
+	}
+	return &Telegram{
+		bot:        bot,
+		postRepo:   postRepo,
+		teamRepo:   teamRepo,
+		uploadRepo: uploadRepo,
+	}, nil
+}
+
+func (t *Telegram) createPostAction(request *entity.PostUnion) (int, error) {
+	var postActionId int
+	err := retry.Retry(func() error {
+		var err error
+		postActionId, err = t.postRepo.AddPostAction(&entity.PostAction{
+			PostUnionID: request.ID,
+			Operation:   "publish",
+			Platform:    "tg",
+			Status:      "pending",
+			CreatedAt:   time.Now(),
+		})
+		return err
+	})
+	return postActionId, err
+}
+
+func (t *Telegram) updatePostActionStatus(actionId int, request *entity.PostUnion, status, errMsg string) {
+	// Иногда могут возникать ошибки, но они не должны прерывать выполнение ввиду асинхронности бизнес-логики.
+	// Поэтому экспоненциально делаем ретраи и логируем ошибки
+	err := retry.Retry(func() error {
+		return t.postRepo.EditPostAction(&entity.PostAction{
+			ID:          actionId,
+			PostUnionID: request.ID,
+			Operation:   "publish",
+			Platform:    "tg",
+			Status:      status,
+			ErrMessage:  errMsg,
+			CreatedAt:   request.CreatedAt,
+		})
+	})
+	if err != nil {
+		log.Errorf("error while updating post action status: %v", err)
+	}
+}
+
+func (t *Telegram) publishPost(request *entity.PostUnion, actionId int) {
+	var tgChannelId int
+	var err error
+	// получаем id канала
+	err = retry.Retry(func() error {
+		tgChannelId, err = t.teamRepo.GetTGChannelByTeamID(request.TeamID)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		t.updatePostActionStatus(actionId, request, "error", err.Error())
+		return
+	}
+
+	if len(request.Attachments) == 0 {
+		t.handleNoAttachments(request, actionId, tgChannelId)
+	} else if len(request.Attachments) == 1 {
+		t.handleSingleAttachment(request, actionId, tgChannelId)
+	} else if len(request.Attachments) > 1 && len(request.Attachments) < 11 {
+		t.handleMultipleAttachments(request, actionId, tgChannelId)
+	} else {
+		t.updatePostActionStatus(actionId, request, "error", "too many attachments")
+		return
+	}
+}
+
+func (t *Telegram) handleNoAttachments(request *entity.PostUnion, actionId, tgChannelId int) {
+	if request.Text == "" {
+		t.updatePostActionStatus(actionId, request, "error", "empty post")
+		return
+	}
+
+	msg := tgbotapi.NewMessage(int64(tgChannelId), request.Text)
+	_, err := t.bot.Send(msg)
+	if err != nil {
+		t.updatePostActionStatus(actionId, request, "error", err.Error())
+		return
+	}
+
+	t.updatePostActionStatus(actionId, request, "success", "")
+}
+
+func (t *Telegram) handleSingleAttachment(request *entity.PostUnion, actionId, tgChannelId int) {
+	attachment := request.Attachments[0]
+	upload, err := t.uploadRepo.GetUpload(attachment.ID)
+	if err != nil {
+		t.updatePostActionStatus(actionId, request, "error", err.Error())
+		return
+	}
+
+	switch attachment.FileType {
+	case "photo":
+		t.sendPhoto(request, actionId, tgChannelId, upload)
+	case "video":
+		t.sendVideo(request, actionId, tgChannelId, upload)
+	}
+}
+
+func (t *Telegram) handleMultipleAttachments(request *entity.PostUnion, actionId, tgChannelId int) {
+	var mediaGroup []any
+	for i, attachment := range request.Attachments {
+		upload, err := t.uploadRepo.GetUpload(attachment.ID)
+		if err != nil {
+			t.updatePostActionStatus(actionId, request, "error", err.Error())
+			return
+		}
+
+		var media any
+		switch attachment.FileType {
+		case "photo":
+			photo := tgbotapi.NewInputMediaPhoto(tgbotapi.FileReader{
+				Name:   upload.FilePath,
+				Reader: upload.RawBytes,
+			})
+			if i == 0 {
+				photo.Caption = request.Text
+			}
+			media = photo
+		case "video":
+			video := tgbotapi.NewInputMediaVideo(tgbotapi.FileReader{
+				Name:   upload.FilePath,
+				Reader: upload.RawBytes,
+			})
+			if i == 0 {
+				video.Caption = request.Text
+			}
+			media = video
+		}
+		mediaGroup = append(mediaGroup, media)
+	}
+
+	if len(mediaGroup) > 0 {
+		msg := tgbotapi.NewMediaGroup(int64(tgChannelId), mediaGroup)
+		err := retry.Retry(func() error {
+			_, err := t.bot.Send(msg)
+			return err
+		})
+		if err != nil {
+			t.updatePostActionStatus(actionId, request, "error", err.Error())
+			return
+		}
+	}
+
+	t.updatePostActionStatus(actionId, request, "success", "")
+}
+
+func (t *Telegram) sendPhoto(request *entity.PostUnion, actionId, tgChannelId int, upload *entity.Upload) {
+	req := tgbotapi.NewPhoto(int64(tgChannelId), tgbotapi.FileReader{
+		Name:   upload.FilePath,
+		Reader: upload.RawBytes,
+	})
+	req.Caption = request.Text
+	msg, err := t.bot.Send(req)
+	if err != nil {
+		t.updatePostActionStatus(actionId, request, "error", err.Error())
+		return
+	}
+
+	err = retry.Retry(func() error {
+		_, err := t.postRepo.AddPostPlatform(&entity.PostPlatform{
+			PostUnionId: request.ID,
+			PostId:      msg.MessageID,
+			Platform:    "tg",
+		})
+		return err
+	})
+	if err != nil {
+		log.Errorf("error while adding post platform: %v", err)
+	}
+
+	t.updatePostActionStatus(actionId, request, "success", "")
+}
+
+func (t *Telegram) sendVideo(request *entity.PostUnion, actionId, tgChannelId int, upload *entity.Upload) {
+	req := tgbotapi.NewVideo(int64(tgChannelId), tgbotapi.FileReader{
+		Name:   upload.FilePath,
+		Reader: upload.RawBytes,
+	})
+	req.Caption = request.Text
+	msg, err := t.bot.Send(req)
+	if err != nil {
+		log.Errorf("error while adding post video: %v", err)
+		t.updatePostActionStatus(actionId, request, "error", err.Error())
+		return
+	}
+
+	err = retry.Retry(func() error {
+		_, err := t.postRepo.AddPostPlatform(&entity.PostPlatform{
+			PostUnionId: request.ID,
+			PostId:      msg.MessageID,
+			Platform:    "tg",
+		})
+		return err
+	})
+	if err != nil {
+		log.Errorf("error while adding post platform: %v", err)
+	}
+
+	t.updatePostActionStatus(actionId, request, "success", "")
 }
 
 func (t *Telegram) AddPost(request *entity.PostUnion) (int, error) {
-	// создаем action в БД
-	actionId, err := t.postRepo.AddPostAction(&entity.PostAction{
-		PostUnionID: request.ID,
-		Operation:   "publish",
-		Platform:    "tg",
-		Status:      "pending",
-	})
+	actionId, err := t.createPostAction(request)
 	if err != nil {
 		return 0, err
 	}
-	// создаем пост в телеграм в фоновом режиме
-	go func() {
-		// Получаем данные команды
-		tgChannelId, err := t.teamRepo.GetTGChannelByTeamID(request.TeamID)
-		if err != nil {
-			log.Errorf("error while getting tg channel id: %v", err)
-			// Обновляем статус action на error
-			err := t.postRepo.EditPostAction(&entity.PostAction{
-				ID:          actionId,
-				PostUnionID: request.ID,
-				Operation:   "publish",
-				Platform:    "tg",
-				Status:      "error",
-				ErrMessage:  err.Error(),
-			})
-			if err != nil {
-				log.Errorf("error while updating action status: %v", err)
-			}
-			return
-		}
-		// Прикрепляем файлы, если они есть
-		// Если вложение одно
-		if len(request.Attachments) == 1 {
-			attachment := request.Attachments[0]
-			// Получаем файл из БД
-			upload, err := t.uploadRepo.GetUpload(attachment.ID)
-			if err != nil {
-				log.Errorf("error while getting upload: %v", err)
-				// Обновляем статус action на error
-				err := t.postRepo.EditPostAction(&entity.PostAction{
-					ID:          actionId,
-					PostUnionID: request.ID,
-					Operation:   "publish",
-					Platform:    "tg",
-					Status:      "error",
-					ErrMessage:  err.Error(),
-				})
-				if err != nil {
-					log.Errorf("error while updating action status: %v", err)
-				}
-				return
-			}
-			if attachment.FileType == "photo" {
-				req := tgbotapi.NewPhoto(int64(tgChannelId), tgbotapi.FileReader{
-					Name:   upload.FilePath,
-					Reader: upload.RawBytes,
-				})
-				req.Caption = request.Text
-				msg, err := t.bot.Send(req)
-				if err != nil {
-					log.Errorf("error while sending photo: %v", err)
-					// Обновляем статус action на error
-					err := t.postRepo.EditPostAction(&entity.PostAction{
-						ID:          actionId,
-						PostUnionID: request.ID,
-						Operation:   "publish",
-						Platform:    "tg",
-						Status:      "error",
-						ErrMessage:  err.Error(),
-					})
-					if err != nil {
-						log.Errorf("error while updating action status: %v", err)
-					}
-					return
-				}
-				_, err = t.postRepo.AddPostPlatform(&entity.PostPlatform{
-					PostUnionId: request.ID,
-					PostId:      msg.MessageID,
-					Platform:    "tg",
-				})
-				if err != nil {
-					log.Errorf("error while adding post platform: %v", err)
-				}
-				// Обновляем статус action на success
-				err = t.postRepo.EditPostAction(&entity.PostAction{
-					ID:          actionId,
-					PostUnionID: request.ID,
-					Operation:   "publish",
-					Platform:    "tg",
-					Status:      "success",
-					ErrMessage:  "",
-				})
-				if err != nil {
-					log.Errorf("error while updating action status: %v", err)
-				}
-			} else if attachment.FileType == "video" {
-				req := tgbotapi.NewVideo(int64(tgChannelId), tgbotapi.FileReader{
-					Name:   upload.FilePath,
-					Reader: upload.RawBytes,
-				})
-				req.Caption = request.Text
-				// todo
-			}
-		} else if len(request.Attachments) > 1 {
-			// todo
-		}
 
-	}()
+	go t.publishPost(request, actionId)
+
 	return actionId, nil
 }
 

@@ -298,7 +298,7 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 		// ничего не делаем, просто игнорируем сообщение, если оно не относится к нашим каналам
 		return nil
 	}
-	postTg, err := t.postRepo.GetPostTGByMessageID(update.Message.ReplyToMessage.ForwardFromMessageID)
+	postTg, err := t.postRepo.GetPostPlatform(update.Message.ReplyToMessage.ForwardFromMessageID)
 	if err != nil {
 		log.Errorf("Failed to get post_tg: %v", err)
 		return err
