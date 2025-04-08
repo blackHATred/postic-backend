@@ -33,7 +33,7 @@ func NewPostUnion(
 
 func (p *PostUnion) AddPostUnion(request *entity.AddPostRequest) (int, []int, error) {
 	// Проверяем, что пользователь админ или имеет отдельное право на публикации
-	permissions, err := p.teamRepo.GetUserPermissionsByTeamID(request.TeamID, request.UserID)
+	permissions, err := p.teamRepo.GetTeamUserRoles(request.TeamID, request.UserID)
 	if err != nil {
 		return 0, nil, err
 	}

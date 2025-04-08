@@ -21,14 +21,15 @@ type Team interface {
 	// Kick удаляет пользователя из команды
 	Kick(request *entity.KickUserRequest) error
 	// Platforms возвращает список платформ, привязанных к команде
-	Platforms(userID, teamID int) ([]*entity.TeamPlatforms, error)
+	Platforms(userID, teamID int) (*entity.TeamPlatforms, error)
 	// SetVK устанавливает креды для использования VK API
 	SetVK(request *entity.SetVKRequest) error
 }
 
 var (
-	ErrTeamNotFound    = errors.New("team not found")
-	ErrUserNotFound    = errors.New("user not found")
-	ErrUserForbidden   = errors.New("forbidden")
-	ErrTeamNameTooLong = errors.New("team name too long")
+	ErrRoleDoesNotExist     = errors.New("role does not exist")
+	ErrTeamNotFound         = errors.New("team not found")
+	ErrUserNotFound         = errors.New("user not found")
+	ErrUserForbidden        = errors.New("forbidden")
+	ErrTeamNameLenIncorrect = errors.New("team name too long")
 )

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
+	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 )
 
@@ -16,29 +17,104 @@ func NewTeam(db *sqlx.DB) repo.Team {
 	return &Team{db: db}
 }
 
-func (t *Team) GetTGChannelByTeamID(teamId int) (int, error) {
-	var channelId int
-	err := t.db.Get(&channelId, "SELECT channel_id FROM channel_tg WHERE team_id = $1", teamId)
+func (t *Team) GetTeamUsers(teamId int) ([]int, error) {
+	var userIDs []int
+	err := t.db.Select(&userIDs, "SELECT user_id FROM team_user_role WHERE team_id = $1", teamId)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return channelId, nil
+	return userIDs, nil
 }
 
-func (t *Team) GetUserPermissionsByTeamID(teamId int, userId int) ([]repo.UserTeamRole, error) {
+func (t *Team) AddTeam(team *entity.Team) (int, error) {
+	var id int
+	err := t.db.QueryRow(
+		"INSERT INTO team (name) VALUES ($1) RETURNING id",
+		team.Name,
+	).Scan(&id)
+	return id, err
+}
+
+func (t *Team) EditTeam(team *entity.Team) error {
+	_, err := t.db.Exec("UPDATE team SET name = $1 WHERE id = $2", team.Name, team.ID)
+	return err
+}
+
+func (t *Team) GetTeam(teamId int) (*entity.Team, error) {
+	team := &entity.Team{}
+	err := t.db.Get(team, "SELECT id, name, secret, created_at FROM team WHERE id = $1", teamId)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, repo.ErrTeamNotFound
+		}
+		return nil, err
+	}
+	return team, nil
+}
+
+func (t *Team) GetUserTeams(userID int) ([]int, error) {
+	var teamIDs []int
+	err := t.db.Select(&teamIDs, "SELECT team_id FROM team_user_role WHERE user_id = $1", userID)
+	if err != nil {
+		return nil, err
+	}
+	return teamIDs, nil
+}
+
+func (t *Team) GetTeamUserRoles(teamId int, userId int) ([]string, error) {
 	var roles []string
 	query := "SELECT roles FROM team_user_role WHERE team_id = $1 AND user_id = $2"
 	if err := t.db.QueryRow(query, teamId, userId).Scan(pq.Array(&roles)); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return []repo.UserTeamRole{}, nil
+			return []string{}, nil
 		}
 		return nil, err
 	}
-	var userRoles []repo.UserTeamRole
-	for _, role := range roles {
-		userRoles = append(userRoles, repo.UserTeamRole(role))
+	return roles, nil
+}
+
+func (t *Team) EditTeamUserRoles(teamId int, userId int, roles []string) error {
+	_, err := t.db.Exec(
+		"INSERT INTO team_user_role (team_id, user_id, roles) VALUES ($1, $2, $3) "+
+			"ON CONFLICT (team_id, user_id) DO UPDATE SET roles = $3",
+		teamId, userId, pq.Array(roles),
+	)
+	var pgErr *pq.Error
+	if errors.As(err, &pgErr) && pgErr.Code.Name() == "foreign_key_violation" {
+		return repo.ErrUserNotFound
 	}
-	return userRoles, nil
+	return err
+}
+
+func (t *Team) DeleteTeamUserRoles(teamId int, userId int) error {
+	_, err := t.db.Exec("DELETE FROM team_user_role WHERE team_id = $1 AND user_id = $2", teamId, userId)
+	return err
+}
+
+func (t *Team) GetTGChannelByTeamID(teamId int) (int, int, error) {
+	var channelId, discussionId sql.NullInt64
+	err := t.db.QueryRow(
+		"SELECT channel_id, discussion_id FROM channel_tg WHERE team_id = $1",
+		teamId,
+	).Scan(&channelId, &discussionId)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, nil
+		}
+		return 0, 0, err
+	}
+
+	// Возвращаем 0, если поле NULL
+	var chId, discId int
+	if channelId.Valid {
+		chId = int(channelId.Int64)
+	}
+	if discussionId.Valid {
+		discId = int(discussionId.Int64)
+	}
+
+	return chId, discId, nil
 }
 
 func (t *Team) GetTeamIDBySecret(secret string) (int, error) {

@@ -75,7 +75,7 @@ func (t *Telegram) publishPost(request *entity.PostUnion, actionId int) {
 	var err error
 	// получаем id канала
 	err = retry.Retry(func() error {
-		tgChannelId, err = t.teamRepo.GetTGChannelByTeamID(request.TeamID)
+		tgChannelId, _, err = t.teamRepo.GetTGChannelByTeamID(request.TeamID)
 		if err != nil {
 			return err
 		}
@@ -83,6 +83,10 @@ func (t *Telegram) publishPost(request *entity.PostUnion, actionId int) {
 	})
 	if err != nil {
 		t.updatePostActionStatus(actionId, request, "error", err.Error())
+		return
+	}
+	if tgChannelId == 0 {
+		t.updatePostActionStatus(actionId, request, "error", "channel not found")
 		return
 	}
 

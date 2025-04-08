@@ -1,6 +1,9 @@
 package repo
 
-import "postic-backend/internal/entity"
+import (
+	"errors"
+	"postic-backend/internal/entity"
+)
 
 type User interface {
 	// AddUser добавляет нового пользователя
@@ -18,3 +21,7 @@ type User interface {
 	// PutTGChannel добавляет канал Телеграм как канал публикации для пользователя
 	PutTGChannel(userID, channelID, discussionID int) error
 }
+
+var (
+	ErrUserNotFound = errors.New("user not found")
+)

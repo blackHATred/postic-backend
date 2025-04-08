@@ -150,9 +150,9 @@ func (t *Team) Create(c echo.Context) error {
 
 	id, err := t.teamUseCase.CreateTeam(&request)
 	switch {
-	case errors.Is(err, usecase.ErrTeamNameTooLong):
+	case errors.Is(err, usecase.ErrTeamNameLenIncorrect):
 		return c.JSON(http.StatusBadRequest, echo.Map{
-			"error": "Слишком длинное имя команды",
+			"error": "Имя команды должно быть от 1 до 64 символов",
 		})
 	case err != nil:
 		c.Logger().Errorf("Ошибка при создании команды: %v", err)
@@ -198,6 +198,10 @@ func (t *Team) Invite(c echo.Context) error {
 		return c.JSON(http.StatusForbidden, echo.Map{
 			"error": "Для этой операции требуются права администратора",
 		})
+	case errors.Is(err, usecase.ErrRoleDoesNotExist):
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Указана несуществующая роль",
+		})
 	case err != nil:
 		c.Logger().Errorf("Ошибка при приглашении пользователя в команду: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{
@@ -239,6 +243,10 @@ func (t *Team) Roles(c echo.Context) error {
 	case errors.Is(err, usecase.ErrUserForbidden):
 		return c.JSON(http.StatusForbidden, echo.Map{
 			"error": "Для этой операции требуются права администратора",
+		})
+	case errors.Is(err, usecase.ErrRoleDoesNotExist):
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Указана несуществующая роль",
 		})
 	case err != nil:
 		c.Logger().Errorf("Ошибка при обновлении ролей пользователей в команде: %v", err)

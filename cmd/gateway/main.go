@@ -65,6 +65,7 @@ func main() {
 	postUseCase := service.NewPostUnion(postRepo, teamRepo, uploadRepo, telegramUseCase)
 	userUseCase := service.NewUser(userRepo)
 	uploadUseCase := service.NewUpload(uploadRepo)
+	teamUseCase := service.NewTeam(teamRepo)
 	//commentUseCase := service.NewComment(commentRepo, "http://me-herbs.gl.at.ply.gg:2465/sum")
 
 	// запускаем сервисы delivery (обработка запросов)
@@ -73,6 +74,7 @@ func main() {
 	postDelivery := delivery.NewPost(authManager, postUseCase)
 	userDelivery := delivery.NewUser(userUseCase, authManager, cookieManager)
 	uploadDelivery := delivery.NewUpload(uploadUseCase, userUseCase, authManager)
+	teamDelivery := delivery.NewTeam(teamUseCase, authManager)
 	// commentDelivery := delivery.NewComment(cookieManager, telegramUseCase, commentUseCase)
 
 	// REST API
@@ -134,6 +136,9 @@ func main() {
 	// comments
 	//comments := api.Group("/comment")
 	//commentDelivery.Configure(comments)
+	// teams
+	teams := api.Group("/teams")
+	teamDelivery.Configure(teams)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer stop()
