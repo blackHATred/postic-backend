@@ -113,11 +113,23 @@ func (t *Telegram) handleNoAttachments(request *entity.PostUnion, actionId, tgCh
 		return
 	}
 
-	msg := tgbotapi.NewMessage(int64(tgChannelId), request.Text)
-	_, err := t.bot.Send(msg)
+	newMsg := tgbotapi.NewMessage(int64(tgChannelId), request.Text)
+	msg, err := t.bot.Send(newMsg)
 	if err != nil {
 		t.updatePostActionStatus(actionId, "error", err.Error())
 		return
+	}
+
+	err = retry.Retry(func() error {
+		_, err := t.postRepo.AddPostPlatform(&entity.PostPlatform{
+			PostUnionId: request.ID,
+			PostId:      msg.MessageID,
+			Platform:    "tg",
+		})
+		return err
+	})
+	if err != nil {
+		log.Errorf("error while adding post platform: %v", err)
 	}
 
 	t.updatePostActionStatus(actionId, "success", "")
@@ -172,16 +184,30 @@ func (t *Telegram) handleMultipleAttachments(request *entity.PostUnion, actionId
 		mediaGroup = append(mediaGroup, media)
 	}
 
+	var msg tgbotapi.Message
 	if len(mediaGroup) > 0 {
-		msg := tgbotapi.NewMediaGroup(int64(tgChannelId), mediaGroup)
+		NewMsg := tgbotapi.NewMediaGroup(int64(tgChannelId), mediaGroup)
 		err := retry.Retry(func() error {
-			_, err := t.bot.Send(msg)
+			var err error
+			msg, err = t.bot.Send(NewMsg)
 			return err
 		})
 		if err != nil {
 			t.updatePostActionStatus(actionId, "error", err.Error())
 			return
 		}
+	}
+
+	err := retry.Retry(func() error {
+		_, err := t.postRepo.AddPostPlatform(&entity.PostPlatform{
+			PostUnionId: request.ID,
+			PostId:      msg.MessageID,
+			Platform:    "tg",
+		})
+		return err
+	})
+	if err != nil {
+		log.Errorf("error while adding post platform: %v", err)
 	}
 
 	t.updatePostActionStatus(actionId, "success", "")
