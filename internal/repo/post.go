@@ -6,7 +6,7 @@ import (
 )
 
 type Post interface {
-	// GetPostUnions возвращает агрегированные посты команды с учетом оффсета (ПОСЛЕ указанного момента)
+	// GetPostUnions возвращает агрегированные посты команды с учетом оффсета (ДО указанного момента)
 	GetPostUnions(teamID int, offset time.Time, limit int) ([]*entity.PostUnion, error)
 	// GetPostUnion возвращает агрегированный пост
 	GetPostUnion(postUnionID int) (*entity.PostUnion, error)

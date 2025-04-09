@@ -312,7 +312,7 @@ func (p *PostUnion) GetPostStatus(request *entity.PostStatusRequest) ([]*entity.
 		return nil, usecase.ErrUserForbidden
 	}
 
-	responses := make([]*entity.PostActionResponse, len(postUnion.Platforms))
+	responses := make([]*entity.PostActionResponse, 0)
 
 	actionIDs, err := p.postRepo.GetPostActions(request.PostUnionID)
 	if err != nil {
@@ -327,8 +327,10 @@ func (p *PostUnion) GetPostStatus(request *entity.PostStatusRequest) ([]*entity.
 		response := &entity.PostActionResponse{
 			PostID:     request.PostUnionID,
 			Platform:   action.Platform,
+			Operation:  action.Operation,
 			Status:     action.Status,
 			ErrMessage: action.ErrMessage,
+			CreatedAt:  action.CreatedAt,
 		}
 		responses = append(responses, response)
 	}

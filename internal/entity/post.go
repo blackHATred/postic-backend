@@ -123,10 +123,12 @@ type PostStatusRequest struct {
 }
 
 type PostActionResponse struct {
-	PostID     int    `json:"post_id"`
-	Platform   string `json:"platform"`
-	Status     string `json:"status"`
-	ErrMessage string `json:"err_message"`
+	PostID     int       `json:"post_id"`
+	Operation  string    `json:"operation"`
+	Platform   string    `json:"platform"`
+	Status     string    `json:"status"`
+	ErrMessage string    `json:"err_message"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type ScheduledPost struct {
