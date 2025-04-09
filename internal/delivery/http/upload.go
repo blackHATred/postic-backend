@@ -81,7 +81,7 @@ func (u *Upload) Upload(c echo.Context) error {
 }
 
 func (u *Upload) GetFile(c echo.Context) error {
-	userID, err := u.authManager.CheckAuthFromContext(c)
+	_, err := u.authManager.CheckAuthFromContext(c)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, echo.Map{
 			"error": "Пользователь не авторизован",
@@ -94,7 +94,7 @@ func (u *Upload) GetFile(c echo.Context) error {
 		})
 	}
 
-	file, err := u.uploadUseCase.GetUpload(fileID, userID)
+	file, err := u.uploadUseCase.GetUpload(fileID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{
 			"error": "Ошибка получения файла: " + err.Error(),

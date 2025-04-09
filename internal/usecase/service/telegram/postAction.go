@@ -249,18 +249,134 @@ func (t *Telegram) AddPost(request *entity.PostUnion) (int, error) {
 }
 
 func (t *Telegram) EditPost(request *entity.EditPostRequest) (int, error) {
-	//TODO implement me
-	panic("implement me")
+	var postActionId int
+	err := retry.Retry(func() error {
+		var err error
+		postActionId, err = t.postRepo.AddPostAction(&entity.PostAction{
+			PostUnionID: request.PostUnionID,
+			Operation:   "edit",
+			Platform:    "tg",
+			Status:      "pending",
+			CreatedAt:   time.Now(),
+		})
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	post, err := t.postRepo.GetPostUnion(request.PostUnionID)
+	if err != nil {
+		t.updatePostActionStatus(postActionId, post, "error", err.Error())
+		return 0, err
+	}
+
+	var tgChannelId int
+	err = retry.Retry(func() error {
+		var err error
+		tgChannelId, _, err = t.teamRepo.GetTGChannelByTeamID(post.TeamID)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		t.updatePostActionStatus(postActionId, post, "error", err.Error())
+		return 0, err
+	}
+
+	postPlatform, err := t.postRepo.GetPostPlatform(request.PostUnionID, "tg")
+	if err != nil {
+		t.updatePostActionStatus(postActionId, post, "error", err.Error())
+		return 0, err
+	}
+
+	// Start asynchronous edit operation
+	go t.editPostAsync(post, postActionId, tgChannelId, postPlatform.PostId, request.Text)
+
+	return postActionId, nil
+}
+
+func (t *Telegram) editPostAsync(post *entity.PostUnion, actionId, tgChannelId, messageId int, newText string) {
+	// Если нет вложений, то просто обновляем текст
+	if len(post.Attachments) == 0 {
+		msg := tgbotapi.NewEditMessageText(int64(tgChannelId), messageId, newText)
+		_, err := t.bot.Send(msg)
+		if err != nil {
+			t.updatePostActionStatus(actionId, post, "error", err.Error())
+			return
+		}
+	} else {
+		// Для постов с аттачами редактируем описание первого аттача
+		editMsg := tgbotapi.NewEditMessageCaption(int64(tgChannelId), messageId, newText)
+		_, err := t.bot.Send(editMsg)
+		if err != nil {
+			t.updatePostActionStatus(actionId, post, "error", err.Error())
+			return
+		}
+	}
+
+	t.updatePostActionStatus(actionId, post, "success", "")
 }
 
 func (t *Telegram) DeletePost(request *entity.DeletePostRequest) (int, error) {
-	//TODO implement me
-	panic("implement me")
+	var postActionId int
+	err := retry.Retry(func() error {
+		var err error
+		postActionId, err = t.postRepo.AddPostAction(&entity.PostAction{
+			PostUnionID: request.PostUnionID,
+			Operation:   "delete",
+			Platform:    "tg",
+			Status:      "pending",
+			CreatedAt:   time.Now(),
+		})
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	post, err := t.postRepo.GetPostUnion(request.PostUnionID)
+	if err != nil {
+		t.updatePostActionStatus(postActionId, post, "error", err.Error())
+		return 0, err
+	}
+
+	var tgChannelId int
+	err = retry.Retry(func() error {
+		var err error
+		tgChannelId, _, err = t.teamRepo.GetTGChannelByTeamID(post.TeamID)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		t.updatePostActionStatus(postActionId, post, "error", err.Error())
+		return 0, err
+	}
+
+	go t.deletePostAsync(post, postActionId, tgChannelId)
+
+	return postActionId, nil
 }
 
-func (t *Telegram) GetPostStatus(request *entity.PostStatusRequest) (*entity.PostActionResponse, error) {
-	//TODO implement me
-	panic("implement me")
+func (t *Telegram) deletePostAsync(post *entity.PostUnion, actionId, tgChannelId int) {
+	// Получаем ID поста в телеграме
+	postPlatform, err := t.postRepo.GetPostPlatform(post.ID, "tg")
+	if err != nil {
+		t.updatePostActionStatus(actionId, post, "error", err.Error())
+		return
+	}
+
+	msg := tgbotapi.NewDeleteMessage(int64(tgChannelId), postPlatform.PostId)
+	_, err = t.bot.Send(msg)
+	if err != nil {
+		t.updatePostActionStatus(actionId, post, "error", err.Error())
+		return
+	}
+
+	t.updatePostActionStatus(actionId, post, "success", "")
 }
 
 func (t *Telegram) DoAction(request *entity.DoActionRequest) ([]int, error) {

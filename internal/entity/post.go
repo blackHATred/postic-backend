@@ -7,25 +7,24 @@ import (
 
 type GetPostRequest struct {
 	UserID      int
-	TeamID      int
+	TeamID      int `json:"team_id"`
 	PostUnionID int `json:"post_union_id"`
 }
 
 type GetPostsRequest struct {
-	UserID int `json:"-"`
-	TeamID int `json:"team_id"`
-	Offset int `json:"offset"`
-	Limit  int `json:"-"`
+	UserID int        `json:"-"`
+	TeamID int        `json:"team_id"`
+	Offset *time.Time `json:"offset"`
+	Limit  int        `json:"limit"`
 }
 
 type AddPostRequest struct {
-	UserID int    `json:"-"`
-	TeamID int    `json:"team_id"`
-	Text   string `json:"text"`
-	// PubDateTime указывается в UNIX timestamp UTC +0
-	PubDateTime int      `json:"pub_datetime"`
-	Attachments []int    `json:"attachments"`
-	Platforms   []string `json:"platforms"`
+	UserID      int        `json:"-"`
+	TeamID      int        `json:"team_id"`
+	Text        string     `json:"text"`
+	PubDateTime *time.Time `json:"pub_datetime,omitempty"`
+	Attachments []int      `json:"attachments"`
+	Platforms   []string   `json:"platforms"`
 }
 
 func (r *AddPostRequest) IsValid() error {
@@ -35,7 +34,7 @@ func (r *AddPostRequest) IsValid() error {
 	// Запас в 5 минут сделан намеренно с целью предотвратить возможные издержки.
 	// С точки зрения usecase добавлять пост в очередь на публикацию в прошлом или раннее чем через 5 минут
 	// не имеет смысла
-	if int64(r.PubDateTime) < time.Now().Add(5*time.Minute).Unix() {
+	if r.PubDateTime != nil && r.PubDateTime.Before(time.Now().Add(5*time.Minute)) {
 		return errors.New("pub_datetime must be in the future")
 	}
 	if len(r.Platforms) == 0 {
@@ -66,14 +65,14 @@ func (r *AddPostRequest) IsValid() error {
 
 type EditPostRequest struct {
 	UserID      int
-	TeamID      int
+	TeamID      int    `json:"team_id"`
 	PostUnionID int    `json:"post_union_id"`
 	Text        string `json:"text"`
 }
 
 type DeletePostRequest struct {
 	UserID      int
-	TeamID      int
+	TeamID      int `json:"team_id"`
 	PostUnionID int `json:"post_union_id"`
 }
 

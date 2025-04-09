@@ -164,8 +164,8 @@ func main() {
 		time.Duration(10)*time.Second,
 	)
 	defer cancel()
-	telegramEventListener.StopListener()
 	if err := echoServer.Shutdown(ctx); err != nil {
 		echoServer.Logger.Fatalf("Во время выключения сервера возникла ошибка: %s\n", err)
 	}
+	telegramEventListener.StopListener()
 }

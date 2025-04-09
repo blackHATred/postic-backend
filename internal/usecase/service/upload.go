@@ -33,7 +33,7 @@ func (u *Upload) UploadFile(upload *entity.Upload) (int, error) {
 	return u.uploadRepo.UploadFile(upload)
 }
 
-func (u *Upload) GetUpload(id int, userId int) (*entity.Upload, error) {
+func (u *Upload) GetUpload(id int) (*entity.Upload, error) {
 	upload, err := u.uploadRepo.GetUpload(id)
 	if err != nil {
 		return nil, err

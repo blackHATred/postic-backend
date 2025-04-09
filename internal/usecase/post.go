@@ -1,6 +1,9 @@
 package usecase
 
-import "postic-backend/internal/entity"
+import (
+	"errors"
+	"postic-backend/internal/entity"
+)
 
 type PostPlatform interface {
 	// AddPost ставит публикацию поста в очередь. Возвращает айди созданного action
@@ -9,8 +12,6 @@ type PostPlatform interface {
 	EditPost(request *entity.EditPostRequest) (int, error)
 	// DeletePost ставит в очередь задачу по удалению поста. Возвращает айди созданного action
 	DeletePost(request *entity.DeletePostRequest) (int, error)
-	// GetPostStatus возвращает статус публикации поста по платформе
-	GetPostStatus(request *entity.PostStatusRequest) (*entity.PostActionResponse, error)
 	// DoAction добавляет операцию к PostUnion в очередь. Возвращает айди созданного action
 	DoAction(request *entity.DoActionRequest) ([]int, error)
 }
@@ -30,3 +31,8 @@ type PostUnion interface {
 	// GetPostStatus возвращает статусы публикации поста по каждой из платформ
 	GetPostStatus(request *entity.PostStatusRequest) ([]*entity.PostActionResponse, error)
 }
+
+var (
+	ErrPostUnavailableToEdit             = errors.New("пост недоступен для редактирования")
+	ErrPostTextAndAttachmentsAreRequired = errors.New("пост должен содержать текст и/или вложения")
+)
