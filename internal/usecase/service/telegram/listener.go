@@ -298,7 +298,7 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 		// ничего не делаем, просто игнорируем сообщение, если оно не относится к нашим каналам
 		return nil
 	}
-	postTg, err := t.postRepo.GetPostPlatform(update.Message.ReplyToMessage.ForwardFromMessageID)
+	postTg, err := t.postRepo.GetPostPlatform(update.Message.ReplyToMessage.ForwardFromMessageID, "tg")
 	if err != nil {
 		log.Errorf("Failed to get post_tg: %v", err)
 		return err
@@ -331,12 +331,18 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 			log.Errorf("Failed to save user profile photo: %v", err)
 			// не делаем return - ошибка не критичная, просто не будет аватарки
 		} else {
-			newComment.AvatarMediaFileID = &uploadFileId
+			// Получаем полную информацию о загруженном файле
+			upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
+			if err != nil {
+				log.Errorf("Failed to get uploaded avatar file: %v", err)
+			} else {
+				newComment.AvatarMediaFile = upload
+			}
 		}
 	}
-	log.Infof("New newComment: %v", newComment)
+	log.Infof("New comment: %v", newComment)
 
-	newComment.Attachments = make([]int, 0)
+	newComment.Attachments = make([]*entity.Upload, 0)
 	// Если есть аттачи, то прикрепляем их к комментарию
 	if update.Message.Photo != nil {
 		uploadFileId, err := t.saveFile(update.Message.Photo[0].FileID, "photo")
@@ -344,7 +350,12 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 			log.Errorf("Failed to save photo: %v", err)
 			return err
 		}
-		newComment.Attachments = append(newComment.Attachments, uploadFileId)
+		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
+		if err != nil {
+			log.Errorf("Failed to get uploaded photo file: %v", err)
+			return err
+		}
+		newComment.Attachments = append(newComment.Attachments, upload)
 	}
 	if update.Message.Video != nil {
 		uploadFileId, err := t.saveFile(update.Message.Video.FileID, "video")
@@ -352,7 +363,12 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 			log.Errorf("Failed to save video: %v", err)
 			return err
 		}
-		newComment.Attachments = append(newComment.Attachments, uploadFileId)
+		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
+		if err != nil {
+			log.Errorf("Failed to get uploaded video file: %v", err)
+			return err
+		}
+		newComment.Attachments = append(newComment.Attachments, upload)
 	}
 	// Файл не больше 20 мб
 	if update.Message.Document != nil && update.Message.Document.FileSize < 20*1024*1024 {
@@ -361,7 +377,12 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 			log.Errorf("Failed to save document: %v", err)
 			return err
 		}
-		newComment.Attachments = append(newComment.Attachments, uploadFileId)
+		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
+		if err != nil {
+			log.Errorf("Failed to get uploaded document file: %v", err)
+			return err
+		}
+		newComment.Attachments = append(newComment.Attachments, upload)
 	}
 	if update.Message.Audio != nil {
 		uploadFileId, err := t.saveFile(update.Message.Audio.FileID, "audio")
@@ -369,7 +390,12 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 			log.Errorf("Failed to save audio: %v", err)
 			return err
 		}
-		newComment.Attachments = append(newComment.Attachments, uploadFileId)
+		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
+		if err != nil {
+			log.Errorf("Failed to get uploaded audio file: %v", err)
+			return err
+		}
+		newComment.Attachments = append(newComment.Attachments, upload)
 	}
 	if update.Message.Voice != nil {
 		uploadFileId, err := t.saveFile(update.Message.Voice.FileID, "voice")
@@ -377,7 +403,12 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 			log.Errorf("Failed to save voice: %v", err)
 			return err
 		}
-		newComment.Attachments = append(newComment.Attachments, uploadFileId)
+		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
+		if err != nil {
+			log.Errorf("Failed to get uploaded voice file: %v", err)
+			return err
+		}
+		newComment.Attachments = append(newComment.Attachments, upload)
 	}
 	if update.Message.Sticker != nil {
 		uploadFileId, err := t.saveFile(update.Message.Sticker.FileID, "sticker")
@@ -385,7 +416,12 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 			log.Errorf("Failed to save sticker: %v", err)
 			return err
 		}
-		newComment.Attachments = append(newComment.Attachments, uploadFileId)
+		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
+		if err != nil {
+			log.Errorf("Failed to get uploaded sticker file: %v", err)
+			return err
+		}
+		newComment.Attachments = append(newComment.Attachments, upload)
 	}
 	// Если так вышло, что у сообщения нет текста и аттачей, то игнорируем его
 	if newComment.Text == "" && len(newComment.Attachments) == 0 {
@@ -394,7 +430,7 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 	// Сохраняем комментарий
 	tgCommentId, err := t.commentRepo.AddComment(newComment)
 	if err != nil {
-		log.Errorf("Failed to save newComment: %v", err)
+		log.Errorf("Failed to save comment: %v", err)
 		return err
 	}
 	newComment.ID = tgCommentId

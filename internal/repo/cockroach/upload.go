@@ -91,7 +91,7 @@ func (u *Upload) UploadFile(upload *entity.Upload) (int, error) {
 		return 0, err
 	}
 	var uploadID int
-	if upload.UserID == 0 {
+	if upload.UserID == nil {
 		// Если загрузка не привязана к пользователю, то просто добавляем в БД
 		query := `INSERT INTO mediafile (file_path, file_type) VALUES ($1, $2) RETURNING id`
 		err = u.db.QueryRow(query, upload.FilePath, upload.FileType).Scan(&uploadID)

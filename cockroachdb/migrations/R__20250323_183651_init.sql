@@ -142,6 +142,8 @@ CREATE TABLE IF NOT EXISTS post_comment (
     avatar_mediafile_id INT DEFAULT NULL, -- NULL, если нет аватара
     FOREIGN KEY (avatar_mediafile_id) REFERENCES mediafile (id) ON DELETE SET NULL,
     text STRING(4096), -- может быть NULL только в том случае, если есть аттачи
+    reply_to_comment_id INT DEFAULT NULL, -- NULL, если комментарий не является ответом на другой комментарий
+    is_team_reply BOOL NOT NULL DEFAULT FALSE, -- TRUE, если комментарий оставлен от имени команды в ответ на комментарий пользователя
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 

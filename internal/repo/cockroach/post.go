@@ -139,14 +139,14 @@ func (p *PostDB) EditPostAction(postAction *entity.PostAction) error {
 	return err
 }
 
-func (p *PostDB) GetPostPlatform(postPlatformID int) (*entity.PostPlatform, error) {
+func (p *PostDB) GetPostPlatform(postPlatformID int, platform string) (*entity.PostPlatform, error) {
 	var postPlatform entity.PostPlatform
 	query := `
 		SELECT id, post_union_id, post_id, platform
 		FROM post_platform
-		WHERE id = $1
+		WHERE post_id = $1 AND platform = $2
 	`
-	err := p.db.Get(&postPlatform, query, postPlatformID)
+	err := p.db.Get(&postPlatform, query, postPlatformID, platform)
 	if err != nil {
 		return nil, err
 	}

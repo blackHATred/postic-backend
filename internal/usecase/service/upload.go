@@ -2,7 +2,6 @@ package service
 
 import (
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"postic-backend/internal/entity"
@@ -38,9 +37,6 @@ func (u *Upload) GetUpload(id int, userId int) (*entity.Upload, error) {
 	upload, err := u.uploadRepo.GetUpload(id)
 	if err != nil {
 		return nil, err
-	}
-	if upload.UserID != userId {
-		return nil, errors.New("file does not belong to this user")
 	}
 	return upload, nil
 }

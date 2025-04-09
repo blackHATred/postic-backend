@@ -12,14 +12,12 @@ import (
 
 type Upload struct {
 	uploadUseCase usecase.Upload
-	userUseCase   usecase.User
 	authManager   utils.Auth
 }
 
-func NewUpload(uploadUseCase usecase.Upload, userUseCase usecase.User, authManager utils.Auth) *Upload {
+func NewUpload(uploadUseCase usecase.Upload, authManager utils.Auth) *Upload {
 	return &Upload{
 		uploadUseCase: uploadUseCase,
-		userUseCase:   userUseCase,
 		authManager:   authManager,
 	}
 }
@@ -63,7 +61,7 @@ func (u *Upload) Upload(c echo.Context) error {
 	defer func() { _ = fileBytes.Close() }()
 
 	upload := &entity.Upload{
-		UserID:   userID,
+		UserID:   &userID,
 		FilePath: file.Filename,
 		FileType: fileType,
 		RawBytes: fileBytes,
