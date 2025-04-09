@@ -52,7 +52,7 @@ func (c *Comment) GetLastComments(request *entity.GetLastCommentsRequest) ([]*en
 	}
 	// Получаем комментарии из репозитория, используя текущее время как верхнюю границу
 	// для получения самых последних комментариев
-	comments, err := c.commentRepo.GetComments(request.PostUnionID, request.Offset, request.Limit)
+	comments, err := c.commentRepo.GetComments(request.PostUnionID, *request.Offset, request.Limit)
 	if err != nil {
 		return nil, err
 	}

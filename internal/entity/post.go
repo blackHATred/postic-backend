@@ -6,16 +6,16 @@ import (
 )
 
 type GetPostRequest struct {
-	UserID      int
-	TeamID      int `json:"team_id"`
-	PostUnionID int `json:"post_union_id"`
+	UserID      int `query:"-"`
+	TeamID      int `query:"team_id"`
+	PostUnionID int `query:"post_union_id"`
 }
 
 type GetPostsRequest struct {
-	UserID int        `json:"-"`
-	TeamID int        `json:"team_id"`
-	Offset *time.Time `json:"offset"`
-	Limit  int        `json:"limit"`
+	UserID int        `query:"-"`
+	TeamID int        `query:"team_id"`
+	Offset *time.Time `query:"offset"`
+	Limit  int        `query:"limit"`
 }
 
 type AddPostRequest struct {
@@ -117,9 +117,9 @@ type PostPlatform struct {
 }
 
 type PostStatusRequest struct {
-	UserID      int
-	TeamID      int `json:"team_id"`
-	PostUnionID int `json:"post_union_id" db:"post_union_id"`
+	UserID      int `query:"-"`
+	TeamID      int `query:"team_id"`
+	PostUnionID int `query:"post_union_id"`
 }
 
 type PostActionResponse struct {

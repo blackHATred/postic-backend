@@ -24,17 +24,17 @@ type Comment struct {
 }
 
 type SubscribeRequest struct {
-	UserID      int `json:"-"`
-	TeamID      int `json:"team_id"`
-	PostUnionID int `json:"post_union_id"`
+	UserID      int `query:"-"`
+	TeamID      int `query:"team_id"`
+	PostUnionID int `query:"post_union_id"`
 }
 
 type GetLastCommentsRequest struct {
-	UserID      int       `json:"-"`
-	TeamID      int       `json:"team_id"`
-	PostUnionID int       `json:"post_union_id"`
-	Offset      time.Time `json:"offset"`
-	Limit       int       `json:"limit"`
+	UserID      int        `query:"-"`
+	TeamID      int        `query:"team_id"`
+	PostUnionID int        `query:"post_union_id"`
+	Offset      *time.Time `query:"offset"`
+	Limit       int        `query:"limit"`
 }
 
 type DeleteCommentRequest struct {
@@ -53,7 +53,7 @@ type ReplyCommentRequest struct {
 }
 
 type SummarizeCommentRequest struct {
-	UserID      int `json:"-"`
-	TeamID      int `json:"team_id"`
-	PostUnionID int `json:"post_union_id"`
+	UserID      int `query:"-"`
+	TeamID      int `query:"team_id"`
+	PostUnionID int `query:"post_union_id"`
 }

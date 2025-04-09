@@ -117,7 +117,7 @@ func (c *Comment) Summarize(e echo.Context) error {
 	}
 
 	request := &entity.SummarizeCommentRequest{}
-	err = utils.ReadJSON(e, request)
+	err = utils.ReadQuery(e, request)
 	if err != nil {
 		return e.JSON(http.StatusBadRequest, echo.Map{
 			"error": "Неверный формат запроса",
@@ -151,7 +151,7 @@ func (c *Comment) GetLastComments(e echo.Context) error {
 	}
 
 	request := &entity.GetLastCommentsRequest{}
-	err = utils.ReadJSON(e, request)
+	err = utils.ReadQuery(e, request)
 	if err != nil {
 		return e.JSON(http.StatusBadRequest, echo.Map{
 			"error": "Неверный формат запроса",
@@ -186,7 +186,7 @@ func (c *Comment) SubscribeToComments(e echo.Context) error {
 	}
 
 	request := &entity.SubscribeRequest{}
-	err = utils.ReadJSON(e, request)
+	err = utils.ReadQuery(e, request)
 	if err != nil {
 		return e.JSON(http.StatusBadRequest, echo.Map{
 			"error": "Неверный формат запроса",
@@ -205,6 +205,7 @@ func (c *Comment) SubscribeToComments(e echo.Context) error {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.WriteHeader(http.StatusOK)
 	w.Flush()
 

@@ -147,7 +147,7 @@ func (p *Post) GetPost(c echo.Context) error {
 	}
 
 	request := &entity.GetPostRequest{}
-	err = utils.ReadJSON(c, request)
+	err = utils.ReadQuery(c, request)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
 			"error": "Неверный формат запроса",
@@ -181,7 +181,7 @@ func (p *Post) GetPosts(c echo.Context) error {
 	}
 
 	request := &entity.GetPostsRequest{}
-	err = utils.ReadJSON(c, request)
+	err = utils.ReadQuery(c, request)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
 			"error": "Неверный формат запроса",
@@ -218,7 +218,7 @@ func (p *Post) GetPostStatus(c echo.Context) error {
 		})
 	}
 	request := &entity.PostStatusRequest{}
-	err = utils.ReadJSON(c, request)
+	err = utils.ReadQuery(c, request)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
 			"error": "Неверный формат запроса",
