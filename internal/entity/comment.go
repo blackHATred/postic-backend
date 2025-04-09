@@ -57,3 +57,9 @@ type SummarizeCommentRequest struct {
 	TeamID      int `query:"team_id"`
 	PostUnionID int `query:"post_union_id"`
 }
+
+type GetCommentRequest struct {
+	UserID    int `query:"-"`
+	TeamID    int `query:"team_id"`
+	CommentID int `query:"comment_id"`
+}

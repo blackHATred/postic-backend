@@ -46,6 +46,24 @@ func NewComment(
 	}
 }
 
+func (c *Comment) GetComment(request *entity.GetCommentRequest) (*entity.Comment, error) {
+	// проверяем права пользователя
+	roles, err := c.teamRepo.GetTeamUserRoles(request.TeamID, request.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(roles, repo.AdminRole) && !slices.Contains(roles, repo.CommentsRole) {
+		return nil, usecase.ErrUserForbidden
+	}
+
+	comment, err := c.commentRepo.GetCommentInfo(request.CommentID)
+	if err != nil {
+		return nil, err
+	}
+
+	return comment, nil
+}
+
 func (c *Comment) GetLastComments(request *entity.GetLastCommentsRequest) ([]*entity.Comment, error) {
 	if request.Limit > 100 {
 		request.Limit = 100

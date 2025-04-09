@@ -30,6 +30,7 @@ func (c *Comment) Configure(server *echo.Group) {
 	server.DELETE("/delete", c.DeleteComment)
 	server.GET("/summarize", c.Summarize)
 	server.GET("/last", c.GetLastComments)
+	server.GET("/get", c.GetComment)
 	server.GET("/subscribe", c.SubscribeToComments)
 }
 
@@ -173,6 +174,40 @@ func (c *Comment) GetLastComments(e echo.Context) error {
 	return e.JSON(http.StatusOK, echo.Map{
 		"status":   "ok",
 		"comments": comments,
+	})
+}
+
+func (c *Comment) GetComment(e echo.Context) error {
+	userID, err := c.authManager.CheckAuthFromContext(e)
+	if err != nil {
+		return e.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	}
+
+	request := &entity.GetCommentRequest{}
+	err = utils.ReadQuery(e, request)
+	if err != nil {
+		return e.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат запроса",
+		})
+	}
+	request.UserID = userID
+
+	comment, err := c.commentUseCase.GetComment(request)
+	switch {
+	case errors.Is(err, usecase.ErrUserForbidden):
+		return e.JSON(http.StatusForbidden, echo.Map{
+			"error": "У вас нет прав на получение комментария",
+		})
+	case err != nil:
+		return e.JSON(http.StatusInternalServerError, echo.Map{
+			"error": err.Error(),
+		})
+	}
+	return e.JSON(http.StatusOK, echo.Map{
+		"status":  "ok",
+		"comment": comment,
 	})
 }
 

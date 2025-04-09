@@ -22,6 +22,8 @@ type CommentActionPlatform interface {
 }
 
 type Comment interface {
+	// GetComment возвращает комментарий по ID
+	GetComment(request *entity.GetCommentRequest) (*entity.Comment, error)
 	// GetLastComments возвращает последние комментарии к посту
 	GetLastComments(request *entity.GetLastCommentsRequest) ([]*entity.Comment, error)
 	// GetSummarize возвращает сводку по посту
