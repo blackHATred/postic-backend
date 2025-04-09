@@ -276,7 +276,7 @@ func (t *EventListener) handleCommand(update *tgbotapi.Update) error {
 	case "add_channel":
 		args := update.Message.CommandArguments()
 		params := strings.Split(args, " ")
-		if len(params) > 3 && len(params) < 2 {
+		if len(params) > 3 || len(params) < 2 {
 			msg.Text = "❌ Неверное количество параметров. Используйте: " +
 				"/add_channel <ключ пользователя> <ID канала> <ID обсуждений (при наличии)>.\n" +
 				"Чтобы узнать, как получить ID канала и ID обсуждений, можете воспользоваться командой /help.\n" +
