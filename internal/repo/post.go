@@ -37,6 +37,8 @@ type Post interface {
 
 	// GetPostPlatform возвращает пост с платформы по ID поста
 	GetPostPlatform(postUnionID int, platform string) (*entity.PostPlatform, error)
+	// GetPostPlatformByPlatformPostID возвращает пост с платформы по ID поста
+	GetPostPlatformByPlatformPostID(platformID int, platform string) (*entity.PostPlatform, error)
 	// AddPostPlatform добавляет связанную с PostUnion запись про пост, опубликованный на платформе
 	AddPostPlatform(postPlatform *entity.PostPlatform) (int, error)
 	DeletePostPlatform() error

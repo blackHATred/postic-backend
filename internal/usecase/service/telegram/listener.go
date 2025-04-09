@@ -119,6 +119,25 @@ func (t *EventListener) UnsubscribeFromComments(teamId, postUnionId int) {
 	t.mu.Unlock()
 }
 
+func getExtensionForType(fileType string) string {
+	switch fileType {
+	case "photo":
+		return "jpg"
+	case "video":
+		return "mp4"
+	case "audio":
+		return "mp3"
+	case "voice":
+		return "ogg"
+	case "document":
+		return "bin" // generic binary extension for documents
+	case "sticker":
+		return "webp"
+	default:
+		return "bin"
+	}
+}
+
 func (t *EventListener) saveFile(fileID, fileType string) (int, error) {
 	file, err := t.bot.GetFile(tgbotapi.FileConfig{FileID: fileID})
 	if err != nil {
@@ -133,10 +152,21 @@ func (t *EventListener) saveFile(fileID, fileType string) (int, error) {
 		return 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	var extension string
+	if file.FilePath != "" && strings.Contains(file.FilePath, ".") {
+		// Extract extension from original Telegram file path
+		parts := strings.Split(file.FilePath, ".")
+		extension = parts[len(parts)-1]
+	} else {
+		// Fallback to mapping based on fileType
+		extension = getExtensionForType(fileType)
+	}
+
 	// Сохраняем в S3
 	upload := &entity.Upload{
 		RawBytes: resp.Body,
-		FilePath: fmt.Sprintf("tg/user_avatars/%s.jpg", uuid.New().String()),
+		FilePath: fmt.Sprintf("tg/%s.%s", uuid.New().String(), extension),
 		FileType: fileType,
 	}
 	uploadFileId, err := t.uploadRepo.UploadFile(upload)
@@ -298,7 +328,7 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 		// ничего не делаем, просто игнорируем сообщение, если оно не относится к нашим каналам
 		return nil
 	}
-	postTg, err := t.postRepo.GetPostPlatform(update.Message.ReplyToMessage.ForwardFromMessageID, "tg")
+	postTg, err := t.postRepo.GetPostPlatformByPlatformPostID(update.Message.ReplyToMessage.ForwardFromMessageID, "tg")
 	if err != nil {
 		log.Errorf("Failed to get post_tg: %v", err)
 		return err

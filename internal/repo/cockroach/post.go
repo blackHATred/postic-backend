@@ -336,6 +336,20 @@ func (p *PostDB) GetPostPlatform(postUnionID int, platform string) (*entity.Post
 	return &postPlatform, nil
 }
 
+func (p *PostDB) GetPostPlatformByPlatformPostID(platformID int, platform string) (*entity.PostPlatform, error) {
+	var postPlatform entity.PostPlatform
+	query := `
+		SELECT id, post_union_id, post_id, platform
+		FROM post_platform
+		WHERE post_id = $1 AND platform = $2
+	`
+	err := p.db.Get(&postPlatform, query, platformID, platform)
+	if err != nil {
+		return nil, err
+	}
+	return &postPlatform, nil
+}
+
 func (p *PostDB) AddPostPlatform(postPlatform *entity.PostPlatform) (int, error) {
 	query := `
 		INSERT INTO post_platform (post_union_id, post_id, platform)
