@@ -74,7 +74,7 @@ func main() {
 	userUseCase := service.NewUser(userRepo)
 	uploadUseCase := service.NewUpload(uploadRepo)
 	teamUseCase := service.NewTeam(teamRepo)
-	commentUseCase := service.NewComment(commentRepo, teamRepo, telegramEventListener, telegramCommentUseCase, "http://me-herbs.gl.at.ply.gg:2465/sum")
+	commentUseCase := service.NewComment(commentRepo, postRepo, teamRepo, telegramEventListener, telegramCommentUseCase, "http://me-herbs.gl.at.ply.gg:2465/sum")
 
 	// запускаем сервисы delivery (обработка запросов)
 	cookieManager := utils.NewCookieManager(false)

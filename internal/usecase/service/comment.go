@@ -21,6 +21,7 @@ type subscriber struct {
 
 type Comment struct {
 	commentRepo      repo.Comment
+	postRepo         repo.Post
 	teamRepo         repo.Team
 	telegramListener usecase.Listener
 	telegramAction   usecase.CommentActionPlatform
@@ -31,6 +32,7 @@ type Comment struct {
 
 func NewComment(
 	commentRepo repo.Comment,
+	postRepo repo.Post,
 	teamRepo repo.Team,
 	telegramListener usecase.Listener,
 	telegramAction usecase.CommentActionPlatform,
@@ -38,6 +40,7 @@ func NewComment(
 ) usecase.Comment {
 	return &Comment{
 		commentRepo:      commentRepo,
+		postRepo:         postRepo,
 		teamRepo:         teamRepo,
 		telegramListener: telegramListener,
 		telegramAction:   telegramAction,
@@ -59,6 +62,14 @@ func (c *Comment) GetComment(request *entity.GetCommentRequest) (*entity.Comment
 	comment, err := c.commentRepo.GetCommentInfo(request.CommentID)
 	if err != nil {
 		return nil, err
+	}
+	// проверяем, что комментарий принадлежит этой команде
+	postUnion, err := c.postRepo.GetPostUnion(comment.PostUnionID)
+	if err != nil {
+		return nil, err
+	}
+	if postUnion.TeamID != request.TeamID {
+		return nil, usecase.ErrUserForbidden
 	}
 
 	return comment, nil
