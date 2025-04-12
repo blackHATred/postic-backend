@@ -18,7 +18,8 @@ type Comment struct {
 	teamRepo         repo.Team
 	telegramListener usecase.Listener
 	telegramAction   usecase.CommentActionPlatform
-	mlURL            string
+	summarizeURL     string
+	replyIdeasURL    string
 	subscribers      map[entity.Subscriber]chan *entity.CommentEvent
 	mu               sync.Mutex
 }
@@ -29,7 +30,8 @@ func NewComment(
 	teamRepo repo.Team,
 	telegramListener usecase.Listener,
 	telegramAction usecase.CommentActionPlatform,
-	mlURL string,
+	summarizeURL string,
+	replyIdeasURL string,
 ) usecase.Comment {
 	return &Comment{
 		commentRepo:      commentRepo,
@@ -37,9 +39,56 @@ func NewComment(
 		teamRepo:         teamRepo,
 		telegramListener: telegramListener,
 		telegramAction:   telegramAction,
-		mlURL:            mlURL,
+		summarizeURL:     summarizeURL,
+		replyIdeasURL:    replyIdeasURL,
 		subscribers:      make(map[entity.Subscriber]chan *entity.CommentEvent),
 	}
+}
+
+func (c *Comment) ReplyIdeas(request *entity.ReplyIdeasRequest) (*entity.ReplyIdeasResponse, error) {
+	// проверяем права пользователя
+	roles, err := c.teamRepo.GetTeamUserRoles(request.TeamID, request.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(roles, repo.AdminRole) && !slices.Contains(roles, repo.CommentsRole) {
+		return nil, usecase.ErrUserForbidden
+	}
+
+	_, err = c.commentRepo.GetCommentInfo(request.CommentID)
+	if err != nil {
+		return nil, err
+	}
+
+	/*
+		jsonData, err := json.Marshal(comment)
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequest("POST", c.replyIdeasURL, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		type ServerAnswer struct {
+			Response []string `json:"response"`
+		}
+
+		var serverAnswer ServerAnswer
+		err = json.NewDecoder(resp.Body).Decode(&serverAnswer)
+		if err != nil {
+			return nil, err
+		}
+		log.Infof("response: %v", serverAnswer)
+	*/
+	return &entity.ReplyIdeasResponse{Ideas: []string{"Вариант быстрого ответа"}}, nil
 }
 
 func (c *Comment) GetComment(request *entity.GetCommentRequest) (*entity.Comment, error) {
@@ -131,7 +180,7 @@ func (c *Comment) GetSummarize(request *entity.SummarizeCommentRequest) (*entity
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest("GET", c.mlURL, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("GET", c.summarizeURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, err
 	}

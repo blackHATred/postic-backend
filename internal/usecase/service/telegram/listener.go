@@ -403,6 +403,11 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 	}
 
 	// Создаём комментарий
+	teamID, err := t.teamRepo.GetTeamIDByTGDiscussionID(discussionID)
+	if errors.Is(err, repo.ErrTGChannelNotFound) {
+		log.Errorf("Failed to get team ID by discussion ID: %v", err)
+		return nil
+	}
 	var postUnionID *int
 	var postPlatformID *int
 	if postTg != nil {
@@ -413,7 +418,7 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 		postPlatformID = nil
 	}
 	newComment := &entity.Comment{
-		ID:                0,
+		TeamID:            teamID,
 		PostUnionID:       postUnionID,
 		Platform:          "tg",
 		PostPlatformID:    postPlatformID,

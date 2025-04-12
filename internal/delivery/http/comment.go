@@ -32,6 +32,43 @@ func (c *Comment) Configure(server *echo.Group) {
 	server.GET("/last", c.GetLastComments)
 	server.GET("/get", c.GetComment)
 	server.GET("/subscribe", c.SubscribeToComments)
+	server.GET("/ideas", c.ReplyIdeas)
+}
+
+func (c *Comment) ReplyIdeas(e echo.Context) error {
+	userID, err := c.authManager.CheckAuthFromContext(e)
+	if err != nil {
+		return e.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	}
+
+	request := &entity.ReplyIdeasRequest{}
+	err = utils.ReadQuery(e, request)
+	if err != nil {
+		log.Infof("Ошибка при чтении JSON: %v", err)
+		return e.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат запроса",
+		})
+	}
+	request.UserID = userID
+
+	replyIdeas, err := c.commentUseCase.ReplyIdeas(request)
+	switch {
+	case errors.Is(err, usecase.ErrCannotGenerateReplyIdeas):
+		return e.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Не удалось сгенерировать идеи для ответа",
+		})
+	case errors.Is(err, usecase.ErrUserForbidden):
+		return e.JSON(http.StatusForbidden, echo.Map{
+			"error": "У вас нет прав на получение идей для ответа",
+		})
+	case err != nil:
+		return e.JSON(http.StatusInternalServerError, echo.Map{
+			"error": err.Error(),
+		})
+	}
+	return e.JSON(http.StatusOK, replyIdeas)
 }
 
 func (c *Comment) ReplyToComment(e echo.Context) error {

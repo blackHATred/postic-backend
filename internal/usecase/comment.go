@@ -42,8 +42,11 @@ type Comment interface {
 	ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 	// DeleteComment удаляет комментарий
 	DeleteComment(request *entity.DeleteCommentRequest) error
+	// ReplyIdeas предлагает варианты быстрого ответа на комментарий
+	ReplyIdeas(request *entity.ReplyIdeasRequest) (*entity.ReplyIdeasResponse, error)
 }
 
 var (
-	ErrReplyCommentUnavailable = errors.New("reply comment unavailable")
+	ErrReplyCommentUnavailable  = errors.New("reply comment unavailable")
+	ErrCannotGenerateReplyIdeas = errors.New("cannot generate reply ideas")
 )

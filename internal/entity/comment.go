@@ -8,6 +8,7 @@ type JustTextComment struct {
 
 type Comment struct {
 	ID                int       `json:"id" db:"id"`
+	TeamID            int       `json:"team_id" db:"team_id"`
 	PostUnionID       *int      `json:"post_union_id" db:"post_union_id"`
 	Platform          string    `json:"platform" db:"platform"`
 	PostPlatformID    *int      `json:"post_platform_id" db:"post_platform_id"`
@@ -68,4 +69,14 @@ type Subscriber struct {
 	UserID      int `json:"-"`
 	TeamID      int `json:"team_id" query:"team_id"`
 	PostUnionID int `json:"post_union_id" query:"post_union_id"`
+}
+
+type ReplyIdeasRequest struct {
+	UserID    int `query:"-"`
+	TeamID    int `query:"team_id"`
+	CommentID int `query:"comment_id"`
+}
+
+type ReplyIdeasResponse struct {
+	Ideas []string `json:"ideas"`
 }

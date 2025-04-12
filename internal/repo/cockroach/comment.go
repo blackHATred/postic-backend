@@ -1,6 +1,8 @@
 package cockroach
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/jmoiron/sqlx"
 	"postic-backend/internal/entity"
@@ -33,12 +35,13 @@ func (c *Comment) EditComment(comment *entity.Comment) error {
 	}
 
 	_, err = tx.Exec(`
-		UPDATE post_comment 
-		SET platform = $1, post_platform_id = $2, user_platform_id = $3, comment_platform_id = $4,
-		    full_name = $5, username = $6, avatar_mediafile_id = $7, text = $8,
-		    reply_to_comment_id = $9, is_team_reply = $10, created_at = $11
-		WHERE id = $12
-	`,
+  UPDATE post_comment
+  SET team_id = $1, platform = $2, post_platform_id = $3, user_platform_id = $4, comment_platform_id = $5,
+      full_name = $6, username = $7, avatar_mediafile_id = $8, text = $9,
+      reply_to_comment_id = $10, is_team_reply = $11, created_at = $12
+  WHERE id = $13
+ `,
+		comment.TeamID,
 		comment.Platform,
 		comment.PostPlatformID,
 		comment.UserPlatformID,
@@ -65,17 +68,18 @@ func (c *Comment) EditComment(comment *entity.Comment) error {
 
 func (c *Comment) GetCommentInfoByPlatformID(platformID int, platform string) (*entity.Comment, error) {
 	row := c.db.QueryRowx(`
-		SELECT id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id, 
-		       full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
-		FROM post_comment
-		WHERE comment_platform_id = $1 AND platform = $2
-	`, platformID, platform)
+  SELECT id, team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
+         full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
+  FROM post_comment
+  WHERE comment_platform_id = $1 AND platform = $2
+`, platformID, platform)
 
 	var comment entity.Comment
 	var avatarMediafileID *int
 
-	if err := row.Scan(
+	err := row.Scan(
 		&comment.ID,
+		&comment.TeamID,
 		&comment.PostUnionID,
 		&comment.Platform,
 		&comment.PostPlatformID,
@@ -88,16 +92,20 @@ func (c *Comment) GetCommentInfoByPlatformID(platformID int, platform string) (*
 		&comment.ReplyToCommentID,
 		&comment.IsTeamReply,
 		&comment.CreatedAt,
-	); err != nil {
+	)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, repo.ErrCommentNotFound
+	case err != nil:
 		return nil, err
 	}
 
 	if avatarMediafileID != nil {
 		avatarRow := c.db.QueryRowx(`
-			SELECT id, file_path, file_type, uploaded_by_user_id, created_at
-			FROM mediafile
-			WHERE id = $1
-		`, *avatarMediafileID)
+   SELECT id, file_path, file_type, uploaded_by_user_id, created_at
+   FROM mediafile
+   WHERE id = $1
+`, *avatarMediafileID)
 
 		comment.AvatarMediaFile = &entity.Upload{}
 		if err := avatarRow.StructScan(comment.AvatarMediaFile); err != nil {
@@ -107,11 +115,11 @@ func (c *Comment) GetCommentInfoByPlatformID(platformID int, platform string) (*
 
 	// Загружаем вложения комментария
 	attachmentsRows, err := c.db.Queryx(`
-		SELECT m.id, m.file_path, m.file_type, m.uploaded_by_user_id, m.created_at
-		FROM post_comment_attachment pca
-		JOIN mediafile m ON pca.mediafile_id = m.id
-		WHERE pca.comment_id = $1
-	`, comment.ID)
+  SELECT m.id, m.file_path, m.file_type, m.uploaded_by_user_id, m.created_at
+  FROM post_comment_attachment pca
+  JOIN mediafile m ON pca.mediafile_id = m.id
+  WHERE pca.comment_id = $1
+`, comment.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -175,11 +183,12 @@ func (c *Comment) AddComment(comment *entity.Comment) (int, error) {
 	}
 
 	row := tx.QueryRow(`
-			INSERT INTO post_comment (post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id, 
-			                          full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-			RETURNING id
-		`,
+   INSERT INTO post_comment (team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
+                             full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+   RETURNING id
+`,
+		comment.TeamID,
 		comment.PostUnionID,
 		comment.Platform,
 		comment.PostPlatformID,
@@ -202,9 +211,9 @@ func (c *Comment) AddComment(comment *entity.Comment) (int, error) {
 	if len(comment.Attachments) > 0 {
 		for _, attachment := range comment.Attachments {
 			_, err := tx.Exec(`
-				INSERT INTO post_comment_attachment (comment_id, mediafile_id)
-				VALUES ($1, $2)
-			`, commentID, attachment.ID)
+    INSERT INTO post_comment_attachment (comment_id, mediafile_id)
+    VALUES ($1, $2)
+`, commentID, attachment.ID)
 			if err != nil {
 				return 0, err
 			}
@@ -235,7 +244,7 @@ func (c *Comment) GetComments(postUnionID int, offset time.Time, before bool, li
 	query := fmt.Sprintf(
 		`
 WITH all_comments AS (
- SELECT id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
+ SELECT id, team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
      full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
  FROM post_comment
  WHERE ($1 = 0 OR post_union_id = $1)
@@ -243,7 +252,7 @@ WITH all_comments AS (
  ORDER BY created_at %s
  LIMIT $3
 )
-SELECT id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
+SELECT id, team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
     full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
 FROM all_comments
 ORDER BY CASE WHEN reply_to_comment_id IS NULL THEN 0 ELSE 1 END, created_at DESC
@@ -262,6 +271,7 @@ ORDER BY CASE WHEN reply_to_comment_id IS NULL THEN 0 ELSE 1 END, created_at DES
 
 		if err := rows.Scan(
 			&comment.ID,
+			&comment.TeamID,
 			&comment.PostUnionID,
 			&comment.Platform,
 			&comment.PostPlatformID,
@@ -281,10 +291,10 @@ ORDER BY CASE WHEN reply_to_comment_id IS NULL THEN 0 ELSE 1 END, created_at DES
 		// Загружаем аватар, если он есть
 		if avatarMediafileID != nil {
 			avatarRow := c.db.QueryRowx(`
-				SELECT id, file_path, file_type, uploaded_by_user_id, created_at
-				FROM mediafile
-				WHERE id = $1
-			`, *avatarMediafileID)
+    SELECT id, file_path, file_type, uploaded_by_user_id, created_at
+    FROM mediafile
+    WHERE id = $1
+   `, *avatarMediafileID)
 
 			comment.AvatarMediaFile = &entity.Upload{}
 			if err := avatarRow.StructScan(comment.AvatarMediaFile); err != nil {
@@ -294,11 +304,11 @@ ORDER BY CASE WHEN reply_to_comment_id IS NULL THEN 0 ELSE 1 END, created_at DES
 
 		// Загружаем вложения комментария
 		attachmentsRows, err := c.db.Queryx(`
-			SELECT m.id, m.file_path, m.file_type, m.uploaded_by_user_id, m.created_at
-			FROM post_comment_attachment pca
-			JOIN mediafile m ON pca.mediafile_id = m.id
-			WHERE pca.comment_id = $1
-		`, comment.ID)
+   SELECT m.id, m.file_path, m.file_type, m.uploaded_by_user_id, m.created_at
+   FROM post_comment_attachment pca
+   JOIN mediafile m ON pca.mediafile_id = m.id
+   WHERE pca.comment_id = $1
+  `, comment.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -326,11 +336,11 @@ ORDER BY CASE WHEN reply_to_comment_id IS NULL THEN 0 ELSE 1 END, created_at DES
 func (c *Comment) GetCommentInfo(commentID int) (*entity.Comment, error) {
 	// Получаем основную информацию о комментарии
 	row := c.db.QueryRowx(`
-		SELECT id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id, 
-		       full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
-		FROM post_comment
-		WHERE id = $1
-	`, commentID)
+  SELECT id, team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
+         full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
+  FROM post_comment
+  WHERE id = $1
+ `, commentID)
 
 	var comment entity.Comment
 	var avatarMediafileID *int // Указатель для NULL значений
@@ -338,6 +348,7 @@ func (c *Comment) GetCommentInfo(commentID int) (*entity.Comment, error) {
 	// Извлекаем данные в структуру
 	if err := row.Scan(
 		&comment.ID,
+		&comment.TeamID,
 		&comment.PostUnionID,
 		&comment.Platform,
 		&comment.PostPlatformID,
@@ -357,10 +368,10 @@ func (c *Comment) GetCommentInfo(commentID int) (*entity.Comment, error) {
 	// Загружаем аватар, если он есть
 	if avatarMediafileID != nil {
 		avatarRow := c.db.QueryRowx(`
-			SELECT id, file_path, file_type, uploaded_by_user_id, created_at
-			FROM mediafile
-			WHERE id = $1
-		`, *avatarMediafileID)
+   SELECT id, file_path, file_type, uploaded_by_user_id, created_at
+   FROM mediafile
+   WHERE id = $1
+  `, *avatarMediafileID)
 
 		comment.AvatarMediaFile = &entity.Upload{}
 		if err := avatarRow.StructScan(comment.AvatarMediaFile); err != nil {
@@ -370,11 +381,11 @@ func (c *Comment) GetCommentInfo(commentID int) (*entity.Comment, error) {
 
 	// Загружаем вложения комментария
 	attachmentsRows, err := c.db.Queryx(`
-		SELECT m.id, m.file_path, m.file_type, m.uploaded_by_user_id, m.created_at
-		FROM post_comment_attachment pca
-		JOIN mediafile m ON pca.mediafile_id = m.id
-		WHERE pca.comment_id = $1
-	`, comment.ID)
+  SELECT m.id, m.file_path, m.file_type, m.uploaded_by_user_id, m.created_at
+  FROM post_comment_attachment pca
+  JOIN mediafile m ON pca.mediafile_id = m.id
+  WHERE pca.comment_id = $1
+ `, comment.ID)
 	if err != nil {
 		return nil, err
 	}

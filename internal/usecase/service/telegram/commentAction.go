@@ -187,6 +187,7 @@ func (t *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 
 	// Создаем запись о новом комментарии
 	comment := &entity.Comment{
+		TeamID:            request.TeamID,
 		PostUnionID:       originalMsg.PostUnionID,
 		Platform:          "tg",
 		PostPlatformID:    originalMsg.PostPlatformID,
