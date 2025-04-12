@@ -123,11 +123,7 @@ func (c *Comment) GetComment(request *entity.GetCommentRequest) (*entity.Comment
 		return nil, err
 	}
 	// проверяем, что комментарий принадлежит этой команде
-	postUnion, err := c.postRepo.GetPostUnion(*comment.PostUnionID)
-	if err != nil {
-		return nil, err
-	}
-	if postUnion.TeamID != request.TeamID {
+	if comment.TeamID != request.TeamID {
 		return nil, usecase.ErrUserForbidden
 	}
 
