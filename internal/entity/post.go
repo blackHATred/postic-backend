@@ -15,6 +15,7 @@ type GetPostsRequest struct {
 	UserID int        `query:"-"`
 	TeamID int        `query:"team_id"`
 	Offset *time.Time `query:"offset"`
+	Before bool       `query:"before"`
 	Limit  int        `query:"limit"`
 }
 

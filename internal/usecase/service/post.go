@@ -43,7 +43,7 @@ func (p *PostUnion) scheduleListen() {
 		select {
 		case <-ticker.C:
 			// получаем все запланированные посты, которые ждут публикации
-			scheduledPosts, err := p.postRepo.GetScheduledPosts("pending", time.Now())
+			scheduledPosts, err := p.postRepo.GetScheduledPosts("pending", time.Now(), true, 5)
 			if err != nil {
 				log.Errorf("error getting scheduled posts: %v", err)
 				continue
@@ -287,7 +287,7 @@ func (p *PostUnion) GetPosts(request *entity.GetPostsRequest) ([]*entity.PostUni
 	if request.Offset != nil {
 		offset = *request.Offset
 	}
-	posts, err := p.postRepo.GetPostUnions(request.TeamID, offset, request.Limit)
+	posts, err := p.postRepo.GetPostUnions(request.TeamID, offset, request.Before, request.Limit)
 	if err != nil {
 		return nil, err
 	}

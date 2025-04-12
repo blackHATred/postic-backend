@@ -1,6 +1,9 @@
 package cockroach
 
 import (
+	"database/sql"
+	"errors"
+	"fmt"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	"postic-backend/internal/entity"
@@ -16,20 +19,31 @@ func NewPost(db *sqlx.DB) repo.Post {
 	return &PostDB{db: db}
 }
 
-func (p *PostDB) GetPostUnions(teamID int, offset time.Time, limit int) ([]*entity.PostUnion, error) {
-	query := `
+func (p *PostDB) GetPostUnions(teamID int, offset time.Time, before bool, limit int) ([]*entity.PostUnion, error) {
+	var comparator string
+	var sortOrder string
+
+	if before {
+		comparator = "<"
+		sortOrder = "DESC"
+	} else {
+		comparator = ">"
+		sortOrder = "ASC"
+	}
+
+	query := fmt.Sprintf(`
         SELECT id, user_id, team_id, text, platforms, created_at, pub_datetime
         FROM post_union
-        WHERE team_id = $1 AND created_at < $2
-        ORDER BY created_at DESC
+        WHERE team_id = $1 AND created_at %s $2
+        ORDER BY created_at %s
         LIMIT $3
-    `
+	`, comparator, sortOrder)
 
 	rows, err := p.db.Queryx(query, teamID, offset, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var postUnions []*entity.PostUnion
 	for rows.Next() {
@@ -49,7 +63,7 @@ func (p *PostDB) GetPostUnions(teamID int, offset time.Time, limit int) ([]*enti
 		postUnions = append(postUnions, &post)
 	}
 
-	// For each post, get attachments
+	// Получаем attachments на каждый пост
 	for _, post := range postUnions {
 		attachmentQuery := `
             SELECT m.id, m.file_path, m.file_type, m.uploaded_by_user_id, m.created_at
@@ -93,7 +107,7 @@ func (p *PostDB) GetPostUnion(postUnionID int) (*entity.PostUnion, error) {
 		return nil, err
 	}
 
-	// Get attachments
+	// Получаем attachments на пост
 	attachmentQuery := `
 		SELECT m.id, m.file_path, m.file_type, m.uploaded_by_user_id, m.created_at
 		FROM post_union_mediafile pum
@@ -186,16 +200,28 @@ func (p *PostDB) EditPostUnion(union *entity.PostUnion) error {
 	return tx.Commit()
 }
 
-func (p *PostDB) GetScheduledPosts(status string, offset time.Time) ([]*entity.ScheduledPost, error) {
-	query := `
+func (p *PostDB) GetScheduledPosts(status string, offset time.Time, before bool, limit int) ([]*entity.ScheduledPost, error) {
+	var comparator string
+	var sortOrder string
+
+	if before {
+		comparator = "<"
+		sortOrder = "ASC"
+	} else {
+		comparator = ">"
+		sortOrder = "DESC"
+	}
+
+	query := fmt.Sprintf(`
         SELECT post_union_id, scheduled_at, status, created_at
         FROM scheduled_post
-        WHERE status = $1 AND scheduled_at < $2
-        ORDER BY scheduled_at ASC
-    `
+        WHERE status = $1 AND scheduled_at %s $2
+        ORDER BY scheduled_at %s
+        LIMIT $3
+    `, comparator, sortOrder)
 
 	var scheduledPosts []*entity.ScheduledPost
-	err := p.db.Select(&scheduledPosts, query, status, offset)
+	err := p.db.Select(&scheduledPosts, query, status, offset, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +252,6 @@ func (p *PostDB) AddScheduledPost(scheduledPost *entity.ScheduledPost) (int, err
         RETURNING post_union_id
     `
 
-	// If created_at is zero, use current time
 	createdAt := scheduledPost.CreatedAt
 	if createdAt.IsZero() {
 		createdAt = time.Now()
@@ -344,7 +369,10 @@ func (p *PostDB) GetPostPlatformByPlatformPostID(platformID int, platform string
 		WHERE post_id = $1 AND platform = $2
 	`
 	err := p.db.Get(&postPlatform, query, platformID, platform)
-	if err != nil {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, repo.ErrPostPlatformNotFound
+	case err != nil:
 		return nil, err
 	}
 	return &postPlatform, nil

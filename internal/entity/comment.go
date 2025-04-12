@@ -8,9 +8,9 @@ type JustTextComment struct {
 
 type Comment struct {
 	ID                int       `json:"id" db:"id"`
-	PostUnionID       int       `json:"post_union_id" db:"post_union_id"`
+	PostUnionID       *int      `json:"post_union_id" db:"post_union_id"`
 	Platform          string    `json:"platform" db:"platform"`
-	PostPlatformID    int       `json:"post_platform_id" db:"post_platform_id"`
+	PostPlatformID    *int      `json:"post_platform_id" db:"post_platform_id"`
 	UserPlatformID    int       `json:"user_platform_id" db:"user_platform_id"`
 	CommentPlatformID int       `json:"comment_platform_id" db:"comment_platform_id"`
 	FullName          string    `json:"full_name" db:"full_name"`
@@ -23,18 +23,13 @@ type Comment struct {
 	Attachments       []*Upload `json:"attachments"`
 }
 
-type SubscribeRequest struct {
-	UserID      int `query:"-"`
-	TeamID      int `query:"team_id"`
-	PostUnionID int `query:"post_union_id"`
-}
-
-type GetLastCommentsRequest struct {
-	UserID      int        `query:"-"`
-	TeamID      int        `query:"team_id"`
-	PostUnionID int        `query:"post_union_id"`
-	Offset      *time.Time `query:"offset"`
-	Limit       int        `query:"limit"`
+type GetCommentsRequest struct {
+	UserID      int       `query:"-"`
+	TeamID      int       `query:"team_id"`
+	PostUnionID int       `query:"post_union_id"`
+	Offset      time.Time `query:"offset"`
+	Before      bool      `query:"before"`
+	Limit       int       `query:"limit"`
 }
 
 type DeleteCommentRequest struct {
@@ -45,11 +40,11 @@ type DeleteCommentRequest struct {
 }
 
 type ReplyCommentRequest struct {
-	UserID      int       `json:"-"`
-	TeamID      int       `json:"team_id"`
-	CommentID   int       `json:"comment_id"`
-	Text        string    `json:"text"`
-	Attachments []*Upload `json:"attachments"`
+	UserID      int    `json:"-"`
+	TeamID      int    `json:"team_id"`
+	CommentID   int    `json:"comment_id"`
+	Text        string `json:"text"`
+	Attachments []int  `json:"attachments"`
 }
 
 type SummarizeCommentRequest struct {
@@ -62,4 +57,15 @@ type GetCommentRequest struct {
 	UserID    int `query:"-"`
 	TeamID    int `query:"team_id"`
 	CommentID int `query:"comment_id"`
+}
+
+type CommentEvent struct {
+	CommentID int    `json:"comment_id"`
+	Type      string `json:"type"`
+}
+
+type Subscriber struct {
+	UserID      int `json:"-"`
+	TeamID      int `json:"team_id" query:"team_id"`
+	PostUnionID int `json:"post_union_id" query:"post_union_id"`
 }

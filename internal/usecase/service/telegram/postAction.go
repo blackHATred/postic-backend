@@ -184,30 +184,32 @@ func (t *Telegram) handleMultipleAttachments(request *entity.PostUnion, actionId
 		mediaGroup = append(mediaGroup, media)
 	}
 
-	var msg tgbotapi.Message
 	if len(mediaGroup) > 0 {
-		NewMsg := tgbotapi.NewMediaGroup(int64(tgChannelId), mediaGroup)
+		mediaGroupMsg := tgbotapi.NewMediaGroup(int64(tgChannelId), mediaGroup)
+		var messages []tgbotapi.Message
 		err := retry.Retry(func() error {
 			var err error
-			msg, err = t.bot.Send(NewMsg)
+			messages, err = t.bot.SendMediaGroup(mediaGroupMsg)
 			return err
 		})
 		if err != nil {
 			t.updatePostActionStatus(actionId, "error", err.Error())
 			return
 		}
-	}
 
-	err := retry.Retry(func() error {
-		_, err := t.postRepo.AddPostPlatform(&entity.PostPlatform{
-			PostUnionId: request.ID,
-			PostId:      msg.MessageID,
-			Platform:    "tg",
-		})
-		return err
-	})
-	if err != nil {
-		log.Errorf("error while adding post platform: %v", err)
+		if len(messages) > 0 {
+			err := retry.Retry(func() error {
+				_, err := t.postRepo.AddPostPlatform(&entity.PostPlatform{
+					PostUnionId: request.ID,
+					PostId:      messages[0].MessageID,
+					Platform:    "tg",
+				})
+				return err
+			})
+			if err != nil {
+				log.Errorf("error while adding post platform: %v", err)
+			}
+		}
 	}
 
 	t.updatePostActionStatus(actionId, "success", "")

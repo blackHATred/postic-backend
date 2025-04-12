@@ -5,16 +5,21 @@ import (
 	"postic-backend/internal/entity"
 )
 
+type EventSubscriber interface {
+	// SubscribeToCommentEvents подписывается на комментарии к посту и возвращает канал, по которому будут
+	// приходить ID новых, измененных или удаленных комментариев
+	SubscribeToCommentEvents(userID, teamID, postUnionID int) <-chan *entity.CommentEvent
+	UnsubscribeFromComments(userID, teamID, postUnionID int)
+}
+
 type Listener interface {
+	EventSubscriber
 	StartListener()
 	StopListener()
-	// SubscribeToCommentEvents подписывается на комментарии к посту и возвращает канал, по которому будут
-	//приходить ID новых, измененных или удаленных комментариев
-	SubscribeToCommentEvents(teamId, postUnionId int) <-chan int
-	UnsubscribeFromComments(teamId, postUnionId int)
 }
 
 type CommentActionPlatform interface {
+	EventSubscriber
 	// ReplyComment отправляет комментарий в ответ на другой комментарий от имени группы
 	ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 	// DeleteComment удаляет комментарий
@@ -25,14 +30,14 @@ type Comment interface {
 	// GetComment возвращает комментарий по ID
 	GetComment(request *entity.GetCommentRequest) (*entity.Comment, error)
 	// GetLastComments возвращает последние комментарии к посту
-	GetLastComments(request *entity.GetLastCommentsRequest) ([]*entity.Comment, error)
+	GetLastComments(request *entity.GetCommentsRequest) ([]*entity.Comment, error)
 	// GetSummarize возвращает сводку по посту
 	GetSummarize(request *entity.SummarizeCommentRequest) (*entity.Summarize, error)
 	// Subscribe подписывается на получение новых комментариев. Возвращает канал, по которому будут приходить ID
 	// новых комментариев
-	Subscribe(request *entity.SubscribeRequest) (<-chan int, error)
+	Subscribe(request *entity.Subscriber) (<-chan *entity.CommentEvent, error)
 	// Unsubscribe отписывается от получения новых комментариев
-	Unsubscribe(request *entity.SubscribeRequest)
+	Unsubscribe(request *entity.Subscriber)
 	// ReplyComment отправляет комментарий в ответ на другой комментарий от имени группы
 	ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 	// DeleteComment удаляет комментарий

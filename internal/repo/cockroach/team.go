@@ -17,6 +17,18 @@ func NewTeam(db *sqlx.DB) repo.Team {
 	return &Team{db: db}
 }
 
+func (t *Team) GetTeamIDByTGDiscussionID(discussionId int) (int, error) {
+	var teamId int
+	err := t.db.Get(&teamId, "SELECT team_id FROM channel_tg WHERE discussion_id = $1", discussionId)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, repo.ErrTeamNotFound
+	case err != nil:
+		return 0, err
+	}
+	return teamId, nil
+}
+
 func (t *Team) GetTeamUsers(teamId int) ([]int, error) {
 	var userIDs []int
 	err := t.db.Select(&userIDs, "SELECT user_id FROM team_user_role WHERE team_id = $1", teamId)
@@ -137,7 +149,10 @@ func (t *Team) PutTGChannel(teamId int, channelId int, discussionId int) error {
 func (t *Team) GetTGChannelByDiscussionId(discussionId int) (int, error) {
 	var channelId int
 	err := t.db.Get(&channelId, "SELECT channel_id FROM channel_tg WHERE discussion_id = $1", discussionId)
-	if err != nil {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, repo.ErrTGChannelNotFound
+	case err != nil:
 		return 0, err
 	}
 	return channelId, nil

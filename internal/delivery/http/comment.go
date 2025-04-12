@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"errors"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/gommon/log"
@@ -9,7 +10,6 @@ import (
 	"postic-backend/internal/entity"
 	"postic-backend/internal/usecase"
 	"postic-backend/pkg/sse"
-	"strconv"
 	"time"
 )
 
@@ -45,6 +45,7 @@ func (c *Comment) ReplyToComment(e echo.Context) error {
 	request := &entity.ReplyCommentRequest{}
 	err = utils.ReadJSON(e, request)
 	if err != nil {
+		log.Infof("Ошибка при чтении JSON: %v", err)
 		return e.JSON(http.StatusBadRequest, echo.Map{
 			"error": "Неверный формат запроса",
 		})
@@ -151,7 +152,7 @@ func (c *Comment) GetLastComments(e echo.Context) error {
 		})
 	}
 
-	request := &entity.GetLastCommentsRequest{}
+	request := &entity.GetCommentsRequest{}
 	err = utils.ReadQuery(e, request)
 	if err != nil {
 		return e.JSON(http.StatusBadRequest, echo.Map{
@@ -220,7 +221,7 @@ func (c *Comment) SubscribeToComments(e echo.Context) error {
 		})
 	}
 
-	request := &entity.SubscribeRequest{}
+	request := &entity.Subscriber{}
 	err = utils.ReadQuery(e, request)
 	if err != nil {
 		return e.JSON(http.StatusBadRequest, echo.Map{
@@ -231,8 +232,11 @@ func (c *Comment) SubscribeToComments(e echo.Context) error {
 
 	// Подписываемся на комментарии (в сервисе проверяются права доступа)
 	commentsCh, err := c.commentUseCase.Subscribe(request)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusForbidden, err.Error())
+	switch {
+	case errors.Is(err, usecase.ErrUserForbidden):
+		return echo.NewHTTPError(http.StatusForbidden, "У вас нет прав на получение комментариев")
+	case err != nil:
+		log.Errorf("Ошибка при подписке на комментарии: %v", err)
 	}
 
 	// Настраиваем SSE соединение
@@ -256,17 +260,23 @@ func (c *Comment) SubscribeToComments(e echo.Context) error {
 			log.Infof("SSE клиент отключился, пользователь: %d, IP: %v", userID, e.RealIP())
 			return nil
 
-		case commentID, ok := <-commentsCh:
-			log.Infof("Получен новый комментарий: %d, пользователь: %d, IP: %v", commentID, userID, e.RealIP())
+		case comment, ok := <-commentsCh:
+			log.Infof("Получен новый комментарий: %d, пользователь: %d, IP: %v", comment.CommentID, userID, e.RealIP())
 			if !ok {
 				// Канал был закрыт сервером
 				return nil
 			}
 
+			marshaledComment, err := json.Marshal(comment)
+			if err != nil {
+				log.Errorf("Ошибка при сериализации комментария: %v", err)
+				return err
+			}
+
 			// Отправляем ID нового комментария клиенту
 			event := sse.Event{
 				Event: []byte("comment"),
-				Data:  []byte(strconv.Itoa(commentID)),
+				Data:  marshaledComment,
 			}
 			if err := event.MarshalTo(w); err != nil {
 				log.Errorf("Ошибка при отправке комментария: %v", err)

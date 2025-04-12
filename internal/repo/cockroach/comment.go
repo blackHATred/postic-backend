@@ -1,6 +1,7 @@
 package cockroach
 
 import (
+	"fmt"
 	"github.com/jmoiron/sqlx"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
@@ -15,6 +16,119 @@ func NewComment(db *sqlx.DB) repo.Comment {
 	return &Comment{
 		db: db,
 	}
+}
+
+func (c *Comment) EditComment(comment *entity.Comment) error {
+	tx, err := c.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var avatarMediafileID *int
+
+	// Получаем ID аватара, если он есть
+	if comment.AvatarMediaFile != nil {
+		avatarMediafileID = &comment.AvatarMediaFile.ID
+	}
+
+	_, err = tx.Exec(`
+		UPDATE post_comment 
+		SET platform = $1, post_platform_id = $2, user_platform_id = $3, comment_platform_id = $4,
+		    full_name = $5, username = $6, avatar_mediafile_id = $7, text = $8,
+		    reply_to_comment_id = $9, is_team_reply = $10, created_at = $11
+		WHERE id = $12
+	`,
+		comment.Platform,
+		comment.PostPlatformID,
+		comment.UserPlatformID,
+		comment.CommentPlatformID,
+		comment.FullName,
+		comment.Username,
+		avatarMediafileID,
+		comment.Text,
+		comment.ReplyToCommentID,
+		comment.IsTeamReply,
+		comment.CreatedAt,
+		comment.ID,
+	)
+	if err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Comment) GetCommentInfoByPlatformID(platformID int, platform string) (*entity.Comment, error) {
+	row := c.db.QueryRowx(`
+		SELECT id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id, 
+		       full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
+		FROM post_comment
+		WHERE comment_platform_id = $1 AND platform = $2
+	`, platformID, platform)
+
+	var comment entity.Comment
+	var avatarMediafileID *int
+
+	if err := row.Scan(
+		&comment.ID,
+		&comment.PostUnionID,
+		&comment.Platform,
+		&comment.PostPlatformID,
+		&comment.UserPlatformID,
+		&comment.CommentPlatformID,
+		&comment.FullName,
+		&comment.Username,
+		&avatarMediafileID,
+		&comment.Text,
+		&comment.ReplyToCommentID,
+		&comment.IsTeamReply,
+		&comment.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+
+	if avatarMediafileID != nil {
+		avatarRow := c.db.QueryRowx(`
+			SELECT id, file_path, file_type, uploaded_by_user_id, created_at
+			FROM mediafile
+			WHERE id = $1
+		`, *avatarMediafileID)
+
+		comment.AvatarMediaFile = &entity.Upload{}
+		if err := avatarRow.StructScan(comment.AvatarMediaFile); err != nil {
+			return nil, err
+		}
+	}
+
+	// Загружаем вложения комментария
+	attachmentsRows, err := c.db.Queryx(`
+		SELECT m.id, m.file_path, m.file_type, m.uploaded_by_user_id, m.created_at
+		FROM post_comment_attachment pca
+		JOIN mediafile m ON pca.mediafile_id = m.id
+		WHERE pca.comment_id = $1
+	`, comment.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = attachmentsRows.Close() }()
+	comment.Attachments = make([]*entity.Upload, 0)
+	for attachmentsRows.Next() {
+		upload := &entity.Upload{}
+		if err := attachmentsRows.StructScan(upload); err != nil {
+			return nil, err
+		}
+		comment.Attachments = append(comment.Attachments, upload)
+	}
+
+	if err := attachmentsRows.Err(); err != nil {
+		return nil, err
+	}
+	return &comment, nil
 }
 
 func (c *Comment) GetLastComments(postUnionID int, limit int) ([]*entity.JustTextComment, error) {
@@ -104,26 +218,38 @@ func (c *Comment) AddComment(comment *entity.Comment) (int, error) {
 	return commentID, nil
 }
 
-func (c *Comment) GetComments(postUnionID int, offset time.Time, limit int) ([]*entity.Comment, error) {
-	// Используем CTE для организации комментариев
-	// Сначала получаем все основные комментарии
-	// Затем получаем все ответы на них
-	// И объединяем с правильной сортировкой
-	rows, err := c.db.Queryx(`
+func (c *Comment) GetComments(postUnionID int, offset time.Time, before bool, limit int) ([]*entity.Comment, error) {
+	var comparator string
+	var sortOrder string
+
+	if before {
+		// Получить комментарии ДО offset
+		comparator = "<"
+		sortOrder = "DESC" // Сначала новые
+	} else {
+		// Получить комментарии ПОСЛЕ offset
+		comparator = ">"
+		sortOrder = "ASC" // Сначала более старые
+	}
+
+	query := fmt.Sprintf(
+		`
 WITH all_comments AS (
  SELECT id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
      full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
  FROM post_comment
  WHERE ($1 = 0 OR post_union_id = $1)
- AND created_at > $2  -- Фильтрация комментариев, созданных ПОСЛЕ указанного времени
- ORDER BY created_at DESC
+ AND created_at %s $2
+ ORDER BY created_at %s
  LIMIT $3
 )
 SELECT id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
     full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
 FROM all_comments
 ORDER BY CASE WHEN reply_to_comment_id IS NULL THEN 0 ELSE 1 END, created_at DESC
- `, postUnionID, offset, limit)
+`, comparator, sortOrder,
+	)
+	rows, err := c.db.Queryx(query, postUnionID, offset, limit)
 	if err != nil {
 		return nil, err
 	}

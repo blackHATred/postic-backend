@@ -12,13 +12,6 @@ import (
 	"sync"
 )
 
-// subscriber идентифицирует подписчика на комментарии
-type subscriber struct {
-	userID      int
-	teamID      int
-	postUnionID int
-}
-
 type Comment struct {
 	commentRepo      repo.Comment
 	postRepo         repo.Post
@@ -26,7 +19,7 @@ type Comment struct {
 	telegramListener usecase.Listener
 	telegramAction   usecase.CommentActionPlatform
 	mlURL            string
-	subscribers      map[subscriber]chan int
+	subscribers      map[entity.Subscriber]chan *entity.CommentEvent
 	mu               sync.Mutex
 }
 
@@ -45,7 +38,7 @@ func NewComment(
 		telegramListener: telegramListener,
 		telegramAction:   telegramAction,
 		mlURL:            mlURL,
-		subscribers:      make(map[subscriber]chan int),
+		subscribers:      make(map[entity.Subscriber]chan *entity.CommentEvent),
 	}
 }
 
@@ -64,7 +57,7 @@ func (c *Comment) GetComment(request *entity.GetCommentRequest) (*entity.Comment
 		return nil, err
 	}
 	// проверяем, что комментарий принадлежит этой команде
-	postUnion, err := c.postRepo.GetPostUnion(comment.PostUnionID)
+	postUnion, err := c.postRepo.GetPostUnion(*comment.PostUnionID)
 	if err != nil {
 		return nil, err
 	}
@@ -75,13 +68,34 @@ func (c *Comment) GetComment(request *entity.GetCommentRequest) (*entity.Comment
 	return comment, nil
 }
 
-func (c *Comment) GetLastComments(request *entity.GetLastCommentsRequest) ([]*entity.Comment, error) {
+func (c *Comment) GetLastComments(request *entity.GetCommentsRequest) ([]*entity.Comment, error) {
+	// проверяем права пользователя
+	roles, err := c.teamRepo.GetTeamUserRoles(request.TeamID, request.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(roles, repo.AdminRole) && !slices.Contains(roles, repo.CommentsRole) {
+		return nil, usecase.ErrUserForbidden
+	}
+
+	if request.PostUnionID != 0 {
+		// проверяем, что postUnion принадлежит этой команде
+		postUnion, err := c.postRepo.GetPostUnion(request.PostUnionID)
+		if err != nil {
+			return nil, err
+		}
+		if postUnion.TeamID != request.TeamID {
+			return nil, usecase.ErrUserForbidden
+		}
+	}
+
 	if request.Limit > 100 {
 		request.Limit = 100
 	}
+
 	// Получаем комментарии из репозитория, используя текущее время как верхнюю границу
 	// для получения самых последних комментариев
-	comments, err := c.commentRepo.GetComments(request.PostUnionID, *request.Offset, request.Limit)
+	comments, err := c.commentRepo.GetComments(request.PostUnionID, request.Offset, request.Before, request.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +159,7 @@ func (c *Comment) GetSummarize(request *entity.SummarizeCommentRequest) (*entity
 	}, nil
 }
 
-func (c *Comment) Subscribe(request *entity.SubscribeRequest) (<-chan int, error) {
+func (c *Comment) Subscribe(request *entity.Subscriber) (<-chan *entity.CommentEvent, error) {
 	// проверяем права пользователя
 	roles, err := c.teamRepo.GetTeamUserRoles(request.TeamID, request.UserID)
 	if err != nil {
@@ -155,13 +169,13 @@ func (c *Comment) Subscribe(request *entity.SubscribeRequest) (<-chan int, error
 		return nil, usecase.ErrUserForbidden
 	}
 
-	sub := subscriber{
-		userID:      request.UserID,
-		teamID:      request.TeamID,
-		postUnionID: request.PostUnionID,
+	sub := entity.Subscriber{
+		UserID:      request.UserID,
+		TeamID:      request.TeamID,
+		PostUnionID: request.PostUnionID,
 	}
 
-	ch := make(chan int)
+	ch := make(chan *entity.CommentEvent)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -174,33 +188,56 @@ func (c *Comment) Subscribe(request *entity.SubscribeRequest) (<-chan int, error
 	c.subscribers[sub] = ch
 
 	go func() {
-		tgCh := c.telegramListener.SubscribeToCommentEvents(request.TeamID, request.PostUnionID)
-		// Пересылаем комментарии из Telegram в наш канал
-		for commentID := range tgCh {
-			log.Infof("commentID: %d", commentID)
-			ch <- commentID
+		// Подписываемся сразу в нескольких местах. Listener возвращает новые комментарии и редактирования,
+		// а Action возвращает удаления комментариев другими модераторами
+		tgListenerCh := c.telegramListener.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
+		tgActionCh := c.telegramAction.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
+
+		// объединяем каналы
+		for {
+			select {
+			case comment, ok := <-tgListenerCh:
+				if !ok {
+					tgListenerCh = nil
+					if tgActionCh == nil {
+						// оба каналы закрыты
+						return
+					}
+					continue
+				}
+				ch <- comment
+
+			case comment, ok := <-tgActionCh:
+				if !ok {
+					tgActionCh = nil
+					if tgListenerCh == nil {
+						// оба канала закрыты
+						return
+					}
+					continue
+				}
+				ch <- comment
+			}
 		}
 	}()
-	// в будущем нужно добавить другие платформы помимо телеграмма
 
 	return ch, nil
 }
 
-func (c *Comment) Unsubscribe(request *entity.SubscribeRequest) {
-	sub := subscriber{
-		userID:      request.UserID,
-		teamID:      request.TeamID,
-		postUnionID: request.PostUnionID,
+func (c *Comment) Unsubscribe(request *entity.Subscriber) {
+	sub := entity.Subscriber{
+		UserID:      request.UserID,
+		TeamID:      request.TeamID,
+		PostUnionID: request.PostUnionID,
 	}
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if ch, exists := c.subscribers[sub]; exists {
+		c.telegramListener.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
+		c.telegramAction.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
 		close(ch)
 		delete(c.subscribers, sub)
-
-		c.telegramListener.UnsubscribeFromComments(request.TeamID, request.PostUnionID)
 	}
 }
 

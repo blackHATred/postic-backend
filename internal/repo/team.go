@@ -18,6 +18,8 @@ type Team interface {
 	GetTeamIDBySecret(secret string) (int, error)
 	// GetTeamIDByPostUnionID возвращает ID команды, которая может видеть пост с данным ID
 	GetTeamIDByPostUnionID(postUnionID int) (int, error)
+	// GetTeamIDByTGDiscussionID возвращает ID команды по ID обсуждения
+	GetTeamIDByTGDiscussionID(discussionId int) (int, error)
 
 	// GetUserTeams возвращает список айди команд пользователя
 	GetUserTeams(userID int) ([]int, error)
@@ -44,5 +46,6 @@ const (
 )
 
 var (
-	ErrTeamNotFound = errors.New("team not found")
+	ErrTeamNotFound      = errors.New("team not found")
+	ErrTGChannelNotFound = errors.New("tg channel not found")
 )

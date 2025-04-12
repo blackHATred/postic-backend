@@ -1,13 +1,14 @@
 package repo
 
 import (
+	"errors"
 	"postic-backend/internal/entity"
 	"time"
 )
 
 type Post interface {
 	// GetPostUnions возвращает агрегированные посты команды с учетом оффсета (ДО указанного момента)
-	GetPostUnions(teamID int, offset time.Time, limit int) ([]*entity.PostUnion, error)
+	GetPostUnions(teamID int, offset time.Time, before bool, limit int) ([]*entity.PostUnion, error)
 	// GetPostUnion возвращает агрегированный пост
 	GetPostUnion(postUnionID int) (*entity.PostUnion, error)
 	// AddPostUnion добавляет агрегированный пост и возвращает его айди
@@ -16,7 +17,7 @@ type Post interface {
 	EditPostUnion(*entity.PostUnion) error
 
 	// GetScheduledPosts возвращает список запланированных постов по статусу и оффсету времени (ДО указанного момента)
-	GetScheduledPosts(status string, offset time.Time) ([]*entity.ScheduledPost, error)
+	GetScheduledPosts(status string, offset time.Time, before bool, limit int) ([]*entity.ScheduledPost, error)
 	// GetScheduledPost возвращает запланированный пост по ID
 	GetScheduledPost(postUnionID int) (*entity.ScheduledPost, error)
 	// AddScheduledPost добавляет запланированный пост и возвращает его айди
@@ -43,3 +44,7 @@ type Post interface {
 	AddPostPlatform(postPlatform *entity.PostPlatform) (int, error)
 	DeletePostPlatform() error
 }
+
+var (
+	ErrPostPlatformNotFound = errors.New("post platform not found")
+)

@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"errors"
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/google/uuid"
@@ -9,16 +10,12 @@ import (
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
+	"postic-backend/pkg/retry"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
-
-type subscriber struct {
-	teamId      int
-	postUnionId int
-}
 
 type EventListener struct {
 	bot                       *tgbotapi.BotAPI
@@ -27,7 +24,7 @@ type EventListener struct {
 	postRepo                  repo.Post
 	uploadRepo                repo.Upload
 	commentRepo               repo.Comment
-	subscribers               map[subscriber]chan int
+	subscribers               map[entity.Subscriber]chan *entity.CommentEvent
 	mu                        sync.Mutex
 }
 
@@ -53,7 +50,7 @@ func NewEventListener(
 		postRepo:                  postRepo,
 		uploadRepo:                uploadRepo,
 		commentRepo:               commentRepo,
-		subscribers:               make(map[subscriber]chan int),
+		subscribers:               make(map[entity.Subscriber]chan *entity.CommentEvent),
 	}, nil
 }
 
@@ -65,18 +62,24 @@ func (t *EventListener) StartListener() {
 		time.Sleep(1 * time.Second)
 		lastUpdateID, err = t.telegramEventListenerRepo.GetLastUpdate()
 	}
-	u := tgbotapi.NewUpdate(lastUpdateID + 1)
-	u.Timeout = 60
-	updates := t.bot.GetUpdatesChan(u)
-	for update := range updates {
-		if update.Message != nil {
-			err = t.botProcessUpdate(&update)
-			if err != nil {
-				log.Errorf("Failed to process update: %v", err)
-			}
-			err = t.telegramEventListenerRepo.SetLastUpdate(update.UpdateID)
-			if err != nil {
-				log.Errorf("Failed to set last update: %v", err)
+	for {
+		u := tgbotapi.NewUpdate(lastUpdateID + 1)
+		u.Timeout = 60
+		updates := t.bot.GetUpdatesChan(u)
+		for update := range updates {
+			if update.Message != nil || update.EditedMessage != nil {
+				err = t.botProcessUpdate(&update)
+				if err != nil {
+					log.Errorf("Failed to process update: %v", err)
+					// если произошла ошибка, то пытаемся снова обработать update, перезапустив бота на том же
+					// update id
+					updates.Clear()
+				}
+				lastUpdateID = update.UpdateID
+				err = t.telegramEventListenerRepo.SetLastUpdate(lastUpdateID)
+				if err != nil {
+					log.Errorf("Failed to set last update: %v", err)
+				}
 			}
 		}
 	}
@@ -90,31 +93,39 @@ func (t *EventListener) StopListener() {
 	for _, ch := range t.subscribers {
 		close(ch)
 	}
-	t.subscribers = make(map[subscriber]chan int)
+	t.subscribers = make(map[entity.Subscriber]chan *entity.CommentEvent)
 	t.mu.Unlock()
 }
 
-func (t *EventListener) SubscribeToCommentEvents(teamId, postUnionId int) <-chan int {
-	subscriber := subscriber{
-		teamId:      teamId,
-		postUnionId: postUnionId,
+func (t *EventListener) SubscribeToCommentEvents(userID, teamID, postUnionID int) <-chan *entity.CommentEvent {
+	sub := entity.Subscriber{
+		UserID:      userID,
+		TeamID:      teamID,
+		PostUnionID: postUnionID,
 	}
-	ch := make(chan int)
+
 	t.mu.Lock()
-	t.subscribers[subscriber] = ch
-	t.mu.Unlock()
+	defer t.mu.Unlock()
+	if ch, ok := t.subscribers[sub]; ok {
+		// такой канал уже есть - возвращаем его
+		return ch
+	}
+
+	ch := make(chan *entity.CommentEvent)
+	t.subscribers[sub] = ch
 	return ch
 }
 
-func (t *EventListener) UnsubscribeFromComments(teamId, postUnionId int) {
-	subscriber := subscriber{
-		teamId:      teamId,
-		postUnionId: postUnionId,
+func (t *EventListener) UnsubscribeFromComments(userID, teamID, postUnionID int) {
+	sub := entity.Subscriber{
+		UserID:      userID,
+		TeamID:      teamID,
+		PostUnionID: postUnionID,
 	}
 	t.mu.Lock()
-	if ch, ok := t.subscribers[subscriber]; ok {
+	if ch, ok := t.subscribers[sub]; ok {
 		close(ch)
-		delete(t.subscribers, subscriber)
+		delete(t.subscribers, sub)
 	}
 	t.mu.Unlock()
 }
@@ -322,23 +333,90 @@ func (t *EventListener) handleCommand(update *tgbotapi.Update) error {
 
 func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 	// Проверяем, есть ли у нас такой канал
-	log.Infof("Update: %v", update)
-	_, err := t.teamRepo.GetTGChannelByDiscussionId(int(update.Message.Chat.ID))
-	if err != nil {
-		// ничего не делаем, просто игнорируем сообщение, если оно не относится к нашим каналам
+	discussionID := 0
+	if update.Message != nil {
+		discussionID = int(update.Message.Chat.ID)
+	} else if update.EditedMessage != nil {
+		discussionID = int(update.EditedMessage.Chat.ID)
+	} else {
 		return nil
 	}
-	postTg, err := t.postRepo.GetPostPlatformByPlatformPostID(update.Message.ReplyToMessage.ForwardFromMessageID, "tg")
-	if err != nil {
-		log.Errorf("Failed to get post_tg: %v", err)
-		return err
+
+	err := retry.Retry(func() error {
+		_, err := t.teamRepo.GetTGChannelByDiscussionId(discussionID)
+		if errors.Is(err, repo.ErrTGChannelNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	var postTg *entity.PostPlatform
+	if update.Message != nil && update.Message.ReplyToMessage != nil {
+		// является ответом на какой-то пост, а не просто сообщением в discussion
+		postTg, err = t.postRepo.GetPostPlatformByPlatformPostID(update.Message.ReplyToMessage.ForwardFromMessageID, "tg")
+		if errors.Is(err, repo.ErrPostPlatformNotFound) {
+			// если не найден пост, то просто игнорируем
+		} else if err != nil {
+			log.Errorf("Failed to get post_tg: %v", err)
+			return err
+		}
 	}
+
+	eventType := "new"
+
+	// Если это редактирование, проверяем существующий комментарий
+	if update.EditedMessage != nil {
+		log.Infof("Received edited message: %s", update.EditedMessage.Text)
+		update.Message = update.EditedMessage
+		eventType = "edited"
+		existingComment, err := t.commentRepo.GetCommentInfoByPlatformID(update.Message.MessageID, "tg")
+		if errors.Is(err, repo.ErrCommentNotFound) {
+			return nil
+		}
+		if err != nil {
+			log.Errorf("Failed to get comment: %v", err)
+			return err
+		}
+		existingComment.Text = update.Message.Text
+		existingComment.Attachments, err = t.processAttachments(update)
+		if err != nil {
+			log.Errorf("Failed to process attachments: %v", err)
+			return err
+		}
+		// Если так вышло, что у сообщения по каким-то причинам нет текста и аттачей, то игнорируем его
+		if existingComment.Text == "" && len(existingComment.Attachments) == 0 {
+			return nil
+		}
+		err = t.commentRepo.EditComment(existingComment)
+		if err != nil {
+			log.Errorf("Failed to update comment: %v", err)
+			return err
+		}
+		postUnionID := 0
+		if existingComment.PostUnionID != nil {
+			postUnionID = *existingComment.PostUnionID
+		}
+		return t.notifySubscribers(existingComment.ID, postUnionID, int(update.Message.Chat.ID), eventType)
+	}
+
 	// Создаём комментарий
+	var postUnionID *int
+	var postPlatformID *int
+	if postTg != nil {
+		postUnionID = &postTg.PostUnionId
+		postPlatformID = &postTg.PostId
+	} else {
+		postUnionID = nil
+		postPlatformID = nil
+	}
 	newComment := &entity.Comment{
 		ID:                0,
-		PostUnionID:       postTg.PostUnionId,
+		PostUnionID:       postUnionID,
 		Platform:          "tg",
-		PostPlatformID:    postTg.PostId,
+		PostPlatformID:    postPlatformID,
 		UserPlatformID:    int(update.Message.From.ID),
 		CommentPlatformID: update.Message.MessageID,
 		FullName:          fmt.Sprintf("%s %s", update.Message.From.FirstName, update.Message.From.LastName),
@@ -346,6 +424,7 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 		Text:              update.Message.Text,
 		CreatedAt:         update.Message.Time(),
 	}
+
 	// Загружаем фотку, сохраняем в S3, сохраняем в БД
 	photos, err := t.bot.GetUserProfilePhotos(tgbotapi.UserProfilePhotosConfig{
 		UserID: update.Message.From.ID,
@@ -370,90 +449,13 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 			}
 		}
 	}
-	log.Infof("New comment: %v", newComment)
 
-	newComment.Attachments = make([]*entity.Upload, 0)
-	// Если есть аттачи, то прикрепляем их к комментарию
-	if update.Message.Photo != nil {
-		uploadFileId, err := t.saveFile(update.Message.Photo[0].FileID, "photo")
-		if err != nil {
-			log.Errorf("Failed to save photo: %v", err)
-			return err
-		}
-		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
-		if err != nil {
-			log.Errorf("Failed to get uploaded photo file: %v", err)
-			return err
-		}
-		newComment.Attachments = append(newComment.Attachments, upload)
+	newComment.Attachments, err = t.processAttachments(update)
+	if err != nil {
+		log.Errorf("Failed to process attachments: %v", err)
+		return err
 	}
-	if update.Message.Video != nil {
-		uploadFileId, err := t.saveFile(update.Message.Video.FileID, "video")
-		if err != nil {
-			log.Errorf("Failed to save video: %v", err)
-			return err
-		}
-		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
-		if err != nil {
-			log.Errorf("Failed to get uploaded video file: %v", err)
-			return err
-		}
-		newComment.Attachments = append(newComment.Attachments, upload)
-	}
-	// Файл не больше 20 мб
-	if update.Message.Document != nil && update.Message.Document.FileSize < 20*1024*1024 {
-		uploadFileId, err := t.saveFile(update.Message.Document.FileID, "document")
-		if err != nil {
-			log.Errorf("Failed to save document: %v", err)
-			return err
-		}
-		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
-		if err != nil {
-			log.Errorf("Failed to get uploaded document file: %v", err)
-			return err
-		}
-		newComment.Attachments = append(newComment.Attachments, upload)
-	}
-	if update.Message.Audio != nil {
-		uploadFileId, err := t.saveFile(update.Message.Audio.FileID, "audio")
-		if err != nil {
-			log.Errorf("Failed to save audio: %v", err)
-			return err
-		}
-		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
-		if err != nil {
-			log.Errorf("Failed to get uploaded audio file: %v", err)
-			return err
-		}
-		newComment.Attachments = append(newComment.Attachments, upload)
-	}
-	if update.Message.Voice != nil {
-		uploadFileId, err := t.saveFile(update.Message.Voice.FileID, "voice")
-		if err != nil {
-			log.Errorf("Failed to save voice: %v", err)
-			return err
-		}
-		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
-		if err != nil {
-			log.Errorf("Failed to get uploaded voice file: %v", err)
-			return err
-		}
-		newComment.Attachments = append(newComment.Attachments, upload)
-	}
-	if update.Message.Sticker != nil {
-		uploadFileId, err := t.saveFile(update.Message.Sticker.FileID, "sticker")
-		if err != nil {
-			log.Errorf("Failed to save sticker: %v", err)
-			return err
-		}
-		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
-		if err != nil {
-			log.Errorf("Failed to get uploaded sticker file: %v", err)
-			return err
-		}
-		newComment.Attachments = append(newComment.Attachments, upload)
-	}
-	// Если так вышло, что у сообщения нет текста и аттачей, то игнорируем его
+	// Если так вышло, что у сообщения по каким-то причинам нет текста и аттачей, то игнорируем его
 	if newComment.Text == "" && len(newComment.Attachments) == 0 {
 		return nil
 	}
@@ -465,7 +467,95 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 	}
 	newComment.ID = tgCommentId
 	// Отправляем комментарий подписчикам
-	return t.notifySubscribers(newComment)
+	postUnionIDint := 0
+	if postUnionID != nil {
+		postUnionIDint = *postUnionID
+	}
+	return t.notifySubscribers(tgCommentId, postUnionIDint, int(update.Message.Chat.ID), eventType)
+}
+
+func (t *EventListener) processAttachments(update *tgbotapi.Update) ([]*entity.Upload, error) {
+	attachments := make([]*entity.Upload, 0)
+	if update.Message.Photo != nil {
+		uploadFileId, err := t.saveFile(update.Message.Photo[0].FileID, "photo")
+		if err != nil {
+			log.Errorf("Failed to save photo: %v", err)
+			return nil, err
+		}
+		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
+		if err != nil {
+			log.Errorf("Failed to get uploaded photo file: %v", err)
+			return nil, err
+		}
+		attachments = append(attachments, upload)
+	}
+	if update.Message.Video != nil {
+		uploadFileId, err := t.saveFile(update.Message.Video.FileID, "video")
+		if err != nil {
+			log.Errorf("Failed to save video: %v", err)
+			return nil, err
+		}
+		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
+		if err != nil {
+			log.Errorf("Failed to get uploaded video file: %v", err)
+			return nil, err
+		}
+		attachments = append(attachments, upload)
+	}
+	// Файл не больше 100 мб
+	if update.Message.Document != nil && update.Message.Document.FileSize < 100*1024*1024 {
+		uploadFileId, err := t.saveFile(update.Message.Document.FileID, "document")
+		if err != nil {
+			log.Errorf("Failed to save document: %v", err)
+			return nil, err
+		}
+		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
+		if err != nil {
+			log.Errorf("Failed to get uploaded document file: %v", err)
+			return nil, err
+		}
+		attachments = append(attachments, upload)
+	}
+	if update.Message.Audio != nil {
+		uploadFileId, err := t.saveFile(update.Message.Audio.FileID, "audio")
+		if err != nil {
+			log.Errorf("Failed to save audio: %v", err)
+			return nil, err
+		}
+		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
+		if err != nil {
+			log.Errorf("Failed to get uploaded audio file: %v", err)
+			return nil, err
+		}
+		attachments = append(attachments, upload)
+	}
+	if update.Message.Voice != nil {
+		uploadFileId, err := t.saveFile(update.Message.Voice.FileID, "voice")
+		if err != nil {
+			log.Errorf("Failed to save voice: %v", err)
+			return nil, err
+		}
+		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
+		if err != nil {
+			log.Errorf("Failed to get uploaded voice file: %v", err)
+			return nil, err
+		}
+		attachments = append(attachments, upload)
+	}
+	if update.Message.Sticker != nil {
+		uploadFileId, err := t.saveFile(update.Message.Sticker.FileID, "sticker")
+		if err != nil {
+			log.Errorf("Failed to save sticker: %v", err)
+			return nil, err
+		}
+		upload, err := t.uploadRepo.GetUploadInfo(uploadFileId)
+		if err != nil {
+			log.Errorf("Failed to get uploaded sticker file: %v", err)
+			return nil, err
+		}
+		attachments = append(attachments, upload)
+	}
+	return attachments, nil
 }
 
 func (t *EventListener) botProcessUpdate(update *tgbotapi.Update) error {
@@ -488,41 +578,60 @@ func (t *EventListener) botProcessUpdate(update *tgbotapi.Update) error {
 		// Обработка команд
 		return t.handleCommand(update)
 	}
-	// Reply на пост в канале или редактирование этого reply - это комментарий, который нужно сохранить и отправить подписчикам
-	if update.Message != nil && update.Message.ReplyToMessage != nil && !update.Message.Chat.IsPrivate() {
+	// Сообщение в обсуждениях
+	if (update.Message != nil && !update.Message.Chat.IsPrivate()) ||
+		(update.EditedMessage != nil && !update.EditedMessage.Chat.IsPrivate()) {
 		return t.handleComment(update)
 	}
 	return nil
 }
 
-func (t *EventListener) notifySubscribers(comment *entity.Comment) error {
+func (t *EventListener) notifySubscribers(commentID, postUnionID, discussionID int, eventType string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	// Определяем, какой команде принадлежит комментарий
-	teamId, err := t.teamRepo.GetTeamIDByPostUnionID(comment.PostUnionID)
+	teamId, err := t.teamRepo.GetTeamIDByTGDiscussionID(discussionID)
+	if errors.Is(err, repo.ErrTGChannelNotFound) {
+		// Если не нашли команду, то пропускаем
+		return nil
+	}
 	if err != nil {
 		log.Errorf("Failed to get teamId by postUnionID: %v", err)
 		return err
 	}
-	// Возможны два варианта подписки: на всю ленту комментариев и на комментарии под конкретным постом
-	sub1 := subscriber{
-		teamId:      teamId,
-		postUnionId: comment.PostUnionID,
+	// Смотрим, какие участники есть в команде
+	teamMemberIDs, err := t.teamRepo.GetTeamUsers(teamId)
+	if err != nil {
+		log.Errorf("Failed to get team members: %v", err)
+		return err
 	}
-	sub2 := subscriber{
-		teamId:      teamId,
-		postUnionId: 0,
-	}
-	// Отправляем комментарий подписчикам в новых горутинах для избежания блокировок
-	if ch, ok := t.subscribers[sub1]; ok {
-		go func() {
-			ch <- comment.ID
-		}()
-	}
-	if ch, ok := t.subscribers[sub2]; ok {
-		go func() {
-			ch <- comment.ID
-		}()
+
+	for _, memberID := range teamMemberIDs {
+		sub := entity.Subscriber{
+			UserID:      memberID,
+			TeamID:      teamId,
+			PostUnionID: 0,
+		}
+		if ch, ok := t.subscribers[sub]; ok {
+			go func() {
+				ch <- &entity.CommentEvent{
+					CommentID: commentID,
+					Type:      eventType,
+				}
+			}()
+		}
+		// также возможен вариант, если подписка осуществлена под конкретный пост
+		if postUnionID != 0 {
+			sub.PostUnionID = postUnionID
+			if ch, ok := t.subscribers[sub]; ok {
+				go func() {
+					ch <- &entity.CommentEvent{
+						CommentID: commentID,
+						Type:      eventType,
+					}
+				}()
+			}
+		}
 	}
 	return nil
 }
