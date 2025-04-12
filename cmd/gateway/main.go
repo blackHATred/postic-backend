@@ -80,8 +80,8 @@ func main() {
 		teamRepo,
 		telegramEventListener,
 		telegramCommentUseCase,
-		"http://me-herbs.gl.at.ply.gg:2465/sum",
-		"http://me-herbs.gl.at.ply.gg:2465/sum",
+		"http://leave-doing.gl.at.ply.gg:31585/sum",
+		"http://leave-doing.gl.at.ply.gg:31585/ans",
 	)
 
 	// запускаем сервисы delivery (обработка запросов)

@@ -55,40 +55,57 @@ func (c *Comment) ReplyIdeas(request *entity.ReplyIdeasRequest) (*entity.ReplyId
 		return nil, usecase.ErrUserForbidden
 	}
 
-	_, err = c.commentRepo.GetCommentInfo(request.CommentID)
+	comment, err := c.commentRepo.GetCommentInfo(request.CommentID)
 	if err != nil {
 		return nil, err
 	}
 
-	/*
-		jsonData, err := json.Marshal(comment)
-		if err != nil {
-			return nil, err
-		}
-		req, err := http.NewRequest("POST", c.replyIdeasURL, bytes.NewBuffer(jsonData))
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Content-Type", "application/json")
+	if len(comment.Text) < 2 {
+		// нет смысла что-то предлагать
+		return &entity.ReplyIdeasResponse{Ideas: []string{}}, nil
+	}
 
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, err
-		}
+	type MLRequest struct {
+		Comment string `json:"comment"`
+	}
 
-		type ServerAnswer struct {
-			Response []string `json:"response"`
-		}
+	jsonData, err := json.Marshal(MLRequest{Comment: comment.Text})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest("GET", c.replyIdeasURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
 
-		var serverAnswer ServerAnswer
-		err = json.NewDecoder(resp.Body).Decode(&serverAnswer)
-		if err != nil {
-			return nil, err
-		}
-		log.Infof("response: %v", serverAnswer)
-	*/
-	return &entity.ReplyIdeasResponse{Ideas: []string{"Вариант быстрого ответа"}}, nil
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	type ServerAnswer struct {
+		Warnings      string `json:"warnings"`
+		NoAnswer      bool   `json:"no_answer"`
+		SupportNeeded bool   `json:"support_needed"`
+		Answer0       string `json:"answer_0,omitempty"`
+		Answer1       string `json:"answer_1,omitempty"`
+		Answer2       string `json:"answer_2,omitempty"`
+	}
+
+	var serverAnswer ServerAnswer
+	err = json.NewDecoder(resp.Body).Decode(&serverAnswer)
+	if err != nil {
+		return nil, err
+	}
+	log.Infof("response: %v", serverAnswer)
+
+	if serverAnswer.NoAnswer {
+		// нет ответа
+		return &entity.ReplyIdeasResponse{Ideas: []string{}}, nil
+	}
+	return &entity.ReplyIdeasResponse{Ideas: []string{serverAnswer.Answer0, serverAnswer.Answer1, serverAnswer.Answer2}}, nil
 }
 
 func (c *Comment) GetComment(request *entity.GetCommentRequest) (*entity.Comment, error) {

@@ -10,7 +10,6 @@ import (
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
-	"postic-backend/pkg/retry"
 	"strconv"
 	"strings"
 	"sync"
@@ -342,16 +341,14 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 		return nil
 	}
 
-	err := retry.Retry(func() error {
-		_, err := t.teamRepo.GetTGChannelByDiscussionId(discussionID)
-		if errors.Is(err, repo.ErrTGChannelNotFound) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
+	_, err := t.teamRepo.GetTGChannelByDiscussionId(discussionID)
+	if errors.Is(err, repo.ErrTGChannelNotFound) {
 		return nil
-	})
+	}
+	if err != nil {
+		log.Errorf("Failed to get team ID by discussion ID: %v", err)
+		return err
+	}
 
 	var postTg *entity.PostPlatform
 	if update.Message != nil && update.Message.ReplyToMessage != nil {
