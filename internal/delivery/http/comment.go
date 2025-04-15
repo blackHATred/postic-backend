@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/labstack/echo/v4"
@@ -14,12 +15,14 @@ import (
 )
 
 type Comment struct {
+	ctx            context.Context
 	commentUseCase usecase.Comment
 	authManager    utils.Auth
 }
 
-func NewComment(commentUseCase usecase.Comment, authManager utils.Auth) *Comment {
+func NewComment(ctx context.Context, commentUseCase usecase.Comment, authManager utils.Auth) *Comment {
 	return &Comment{
+		ctx:            ctx,
 		commentUseCase: commentUseCase,
 		authManager:    authManager,
 	}
@@ -293,10 +296,12 @@ func (c *Comment) SubscribeToComments(e echo.Context) error {
 
 	for {
 		select {
+		case <-c.ctx.Done():
+			log.Infof("Пришёл сигнал завершения, обрываем соединение с %d пользователем", userID)
+			return nil
 		case <-e.Request().Context().Done():
 			log.Infof("SSE клиент отключился, пользователь: %d, IP: %v", userID, e.RealIP())
 			return nil
-
 		case comment, ok := <-commentsCh:
 			log.Infof("Получен новый комментарий: %d, пользователь: %d, IP: %v", comment.CommentID, userID, e.RealIP())
 			if !ok {
@@ -320,7 +325,6 @@ func (c *Comment) SubscribeToComments(e echo.Context) error {
 				return err
 			}
 			w.Flush()
-
 		case <-pingTicker.C:
 			// Отправляем ping для поддержания соединения
 			ping := sse.Event{

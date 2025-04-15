@@ -21,6 +21,9 @@ import (
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+	defer stop()
+
 	err := godotenv.Load()
 	if err != nil {
 		log.Info(".env файл не обнаружен")
@@ -91,17 +94,17 @@ func main() {
 	userDelivery := delivery.NewUser(userUseCase, authManager, cookieManager)
 	uploadDelivery := delivery.NewUpload(uploadUseCase, authManager)
 	teamDelivery := delivery.NewTeam(teamUseCase, authManager)
-	commentDelivery := delivery.NewComment(commentUseCase, authManager)
+	commentDelivery := delivery.NewComment(ctx, commentUseCase, authManager)
 
 	// REST API
 	echoServer := echo.New()
-	// echoServer.Server.ReadTimeout = time.Duration(coreParams.HTTP.Server.ReadTimeout) * time.Second
-	// echoServer.Server.ReadHeaderTimeout = time.Duration(coreParams.HTTP.Server.ReadTimeout) * time.Second
-	// echoServer.Server.WriteTimeout = time.Duration(coreParams.HTTP.Server.WriteTimeout) * time.Second
-	// echoServer.Server.IdleTimeout = time.Duration(coreParams.HTTP.Server.ReadTimeout) * time.Second
+	echoServer.Server.ReadTimeout = 60 * time.Second
+	echoServer.Server.ReadHeaderTimeout = 60 * time.Second
+	echoServer.Server.WriteTimeout = 60 * time.Second
+	echoServer.Server.IdleTimeout = 60 * time.Second
 
-	// Не более 10 МБ
-	echoServer.Use(middleware.BodyLimit("10M"))
+	// Не более 20 МБ
+	echoServer.Use(middleware.BodyLimit("20M"))
 	// gzip на прием
 	echoServer.Use(middleware.Decompress())
 	// gzip на отдачу
@@ -156,8 +159,6 @@ func main() {
 	teams := api.Group("/teams")
 	teamDelivery.Configure(teams)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
-	defer stop()
 	go func(server *echo.Echo) {
 		if err := server.Start("0.0.0.0:80"); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			server.Logger.Fatalf("Сервер завершил свою работу по причине: %v\n", err)
