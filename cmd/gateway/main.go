@@ -21,7 +21,7 @@ import (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+	sysCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer stop()
 
 	err := godotenv.Load()
@@ -69,7 +69,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Ошибка при создании Telegram Comment UseCase: %v", err)
 	}
-	telegramEventListener, err := telegram.NewEventListener(telegramBotToken, true, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo)
+	telegramEventListener, err := telegram.NewEventListener(telegramBotToken, false, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo)
 	if err != nil {
 		log.Fatalf("Ошибка при создании слушателя событий Telegram: %v", err)
 	}
@@ -94,30 +94,30 @@ func main() {
 	userDelivery := delivery.NewUser(userUseCase, authManager, cookieManager)
 	uploadDelivery := delivery.NewUpload(uploadUseCase, authManager)
 	teamDelivery := delivery.NewTeam(teamUseCase, authManager)
-	commentDelivery := delivery.NewComment(ctx, commentUseCase, authManager)
+	commentDelivery := delivery.NewComment(sysCtx, commentUseCase, authManager)
 
 	// REST API
 	echoServer := echo.New()
-	echoServer.Server.ReadTimeout = 60 * time.Second
-	echoServer.Server.ReadHeaderTimeout = 60 * time.Second
-	echoServer.Server.WriteTimeout = 60 * time.Second
-	echoServer.Server.IdleTimeout = 60 * time.Second
 
+	// Следующими параметрами должен управлять прокси-сервер по типу nginx
+	// echoServer.Server.ReadTimeout = 60 * time.Second
+	// echoServer.Server.ReadHeaderTimeout = 60 * time.Second
+	// echoServer.Server.WriteTimeout = 60 * time.Second
+	// echoServer.Server.IdleTimeout = 60 * time.Second
 	// Не более 20 МБ
-	echoServer.Use(middleware.BodyLimit("20M"))
+	// echoServer.Use(middleware.BodyLimit("20M"))
 	// gzip на прием
-	echoServer.Use(middleware.Decompress())
+	// echoServer.Use(middleware.Decompress())
 	// gzip на отдачу
-	echoServer.Use(middleware.GzipWithConfig(middleware.GzipConfig{
-		Level: 5,
-	}))
+	// echoServer.Use(middleware.Gzip())
+
 	// request id
 	echoServer.Use(middleware.RequestID())
 
 	// CORS
 	echoServer.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(ctx echo.Context) error {
-			ctx.Response().Header().Set(echo.HeaderAccessControlAllowOrigin, "localhost:3000")
+			ctx.Response().Header().Set(echo.HeaderAccessControlAllowOrigin, "http://localhost:3000")
 			ctx.Response().Header().Set(echo.HeaderAccessControlAllowMethods, strings.Join([]string{
 				http.MethodGet,
 				http.MethodPut,
@@ -161,20 +161,20 @@ func main() {
 
 	go func(server *echo.Echo) {
 		if err := server.Start("0.0.0.0:80"); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			server.Logger.Fatalf("Сервер завершил свою работу по причине: %v\n", err)
+			server.Logger.Errorf("Сервер завершил свою работу по причине: %v\n", err)
 		}
 	}(echoServer)
 	// Запуск слушателя событий Telegram. Если приходит сигнал завершения, то слушатель останавливается.
 	go telegramEventListener.StartListener()
 
-	<-ctx.Done()
+	<-sysCtx.Done()
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
-		time.Duration(10)*time.Second,
+		time.Duration(60)*time.Second,
 	)
 	defer cancel()
 	if err := echoServer.Shutdown(ctx); err != nil {
-		echoServer.Logger.Fatalf("Во время выключения сервера возникла ошибка: %s\n", err)
+		echoServer.Logger.Errorf("Во время выключения сервера возникла ошибка: %s\n", err)
 	}
 	telegramEventListener.StopListener()
 }

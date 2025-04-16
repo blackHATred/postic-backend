@@ -8,7 +8,7 @@ import (
 
 type Post interface {
 	// GetPostUnions возвращает агрегированные посты команды с учетом оффсета (ДО указанного момента)
-	GetPostUnions(teamID int, offset time.Time, before bool, limit int) ([]*entity.PostUnion, error)
+	GetPostUnions(teamID int, offset time.Time, before bool, limit int, filter *string) ([]*entity.PostUnion, error)
 	// GetPostUnion возвращает агрегированный пост
 	GetPostUnion(postUnionID int) (*entity.PostUnion, error)
 	// AddPostUnion добавляет агрегированный пост и возвращает его айди

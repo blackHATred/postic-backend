@@ -19,25 +19,31 @@ func NewPost(db *sqlx.DB) repo.Post {
 	return &PostDB{db: db}
 }
 
-func (p *PostDB) GetPostUnions(teamID int, offset time.Time, before bool, limit int) ([]*entity.PostUnion, error) {
-	var comparator string
-	var sortOrder string
+func (p *PostDB) GetPostUnions(teamID int, offset time.Time, before bool, limit int, filter *string) ([]*entity.PostUnion, error) {
+	comparator := ">"
+	sortOrder := "ASC"
+	filterCondition := "AND 1=1"
 
 	if before {
 		comparator = "<"
 		sortOrder = "DESC"
-	} else {
-		comparator = ">"
-		sortOrder = "ASC"
+	}
+	if filter != nil {
+		switch *filter {
+		case "scheduled":
+			filterCondition = "AND pub_datetime IS NOT NULL AND pub_datetime > NOW()"
+		case "published":
+			filterCondition = "AND (pub_datetime IS NULL OR pub_datetime <= NOW())"
+		}
 	}
 
 	query := fmt.Sprintf(`
         SELECT id, user_id, team_id, text, platforms, created_at, pub_datetime
         FROM post_union
-        WHERE team_id = $1 AND created_at %s $2
+        WHERE team_id = $1 AND created_at %s $2 %s
         ORDER BY created_at %s
         LIMIT $3
-	`, comparator, sortOrder)
+	`, comparator, filterCondition, sortOrder)
 
 	rows, err := p.db.Queryx(query, teamID, offset, limit)
 	if err != nil {

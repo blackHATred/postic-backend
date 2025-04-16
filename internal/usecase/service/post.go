@@ -49,9 +49,11 @@ func (p *PostUnion) scheduleListen() {
 				continue
 			}
 			for _, scheduledPost := range scheduledPosts {
+				log.Infof("scheduled posts: %v", *scheduledPost)
 				if time.Now().After(scheduledPost.ScheduledAt) {
 					// получаем необходимый пост
 					postUnion, err := p.postRepo.GetPostUnion(scheduledPost.PostUnionID)
+					log.Infof("scheduled post: %v", *postUnion)
 					if err != nil {
 						log.Errorf("error getting post union: %v", err)
 					}
@@ -117,7 +119,6 @@ func (p *PostUnion) AddPostUnion(request *entity.AddPostRequest) (int, []int, er
 		PubDate:     request.PubDateTime,
 		Attachments: attachments,
 	}
-
 	postUnionID, err := p.postRepo.AddPostUnion(postUnion)
 	if err != nil {
 		return 0, nil, err
@@ -135,7 +136,6 @@ func (p *PostUnion) AddPostUnion(request *entity.AddPostRequest) (int, []int, er
 		// Так как никаких действий с внешними платформами пока не произошло, то возвращаем пустой список actions
 		return postUnionID, []int{}, nil
 	}
-
 	// Если pubdatetime <= now, то на каждой из платформ создаем action
 	var actionIDs []int
 	for _, platform := range request.Platforms {
@@ -287,7 +287,7 @@ func (p *PostUnion) GetPosts(request *entity.GetPostsRequest) ([]*entity.PostUni
 	if request.Offset != nil {
 		offset = *request.Offset
 	}
-	posts, err := p.postRepo.GetPostUnions(request.TeamID, offset, request.Before, request.Limit)
+	posts, err := p.postRepo.GetPostUnions(request.TeamID, offset, request.Before, request.Limit, request.Filter)
 	if err != nil {
 		return nil, err
 	}

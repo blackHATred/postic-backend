@@ -17,6 +17,7 @@ type GetPostsRequest struct {
 	Offset *time.Time `query:"offset"`
 	Before bool       `query:"before"`
 	Limit  int        `query:"limit"`
+	Filter *string    `query:"filter"`
 }
 
 type AddPostRequest struct {
@@ -31,12 +32,6 @@ type AddPostRequest struct {
 func (r *AddPostRequest) IsValid() error {
 	if r.Text == "" && len(r.Attachments) == 0 {
 		return errors.New("text and attachments are empty")
-	}
-	// Запас в 5 минут сделан намеренно с целью предотвратить возможные издержки.
-	// С точки зрения usecase добавлять пост в очередь на публикацию в прошлом или раннее чем через 5 минут
-	// не имеет смысла
-	if r.PubDateTime != nil && r.PubDateTime.Before(time.Now().Add(5*time.Minute)) {
-		return errors.New("pub_datetime must be in the future")
 	}
 	if len(r.Platforms) == 0 {
 		return errors.New("platforms are empty")

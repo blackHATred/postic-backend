@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/gommon/log"
 	"net/http"
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/entity"
@@ -47,6 +48,8 @@ func (p *Post) AddPost(c echo.Context) error {
 		})
 	}
 	request.UserID = userID
+
+	log.Infof("%v", request)
 
 	postId, actionIDs, err := p.postUseCase.AddPostUnion(request)
 	switch {

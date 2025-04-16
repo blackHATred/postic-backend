@@ -297,13 +297,10 @@ func (c *Comment) SubscribeToComments(e echo.Context) error {
 	for {
 		select {
 		case <-c.ctx.Done():
-			log.Infof("Пришёл сигнал завершения, обрываем соединение с %d пользователем", userID)
 			return nil
 		case <-e.Request().Context().Done():
-			log.Infof("SSE клиент отключился, пользователь: %d, IP: %v", userID, e.RealIP())
 			return nil
 		case comment, ok := <-commentsCh:
-			log.Infof("Получен новый комментарий: %d, пользователь: %d, IP: %v", comment.CommentID, userID, e.RealIP())
 			if !ok {
 				// Канал был закрыт сервером
 				return nil
