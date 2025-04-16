@@ -1,40 +1,50 @@
 package repo
 
 import (
+	"errors"
 	"postic-backend/internal/entity"
+	"time"
 )
 
 type Post interface {
-	// PostUnionId
-
-	// GetPostsByUserID возвращает список агрегированных постов по ID пользователя
-	GetPostsByUserID(userID int) ([]*entity.PostUnion, error)
+	// GetPostUnions возвращает агрегированные посты команды с учетом оффсета (ДО указанного момента)
+	GetPostUnions(teamID int, offset time.Time, before bool, limit int, filter *string) ([]*entity.PostUnion, error)
 	// GetPostUnion возвращает агрегированный пост
 	GetPostUnion(postUnionID int) (*entity.PostUnion, error)
-	// GetPostUnions возвращает список агрегированных постов
-	GetPostUnions(userID int) ([]*entity.PostUnion, error)
-	// AddPostUnion добавляет агрегированный пост
+	// AddPostUnion добавляет агрегированный пост и возвращает его айди
 	AddPostUnion(*entity.PostUnion) (int, error)
+	// EditPostUnion редактирует агрегированный пост
+	EditPostUnion(*entity.PostUnion) error
 
-	// AddPostAction
+	// GetScheduledPosts возвращает список запланированных постов по статусу и оффсету времени (ДО указанного момента)
+	GetScheduledPosts(status string, offset time.Time, before bool, limit int) ([]*entity.ScheduledPost, error)
+	// GetScheduledPost возвращает запланированный пост по ID
+	GetScheduledPost(postUnionID int) (*entity.ScheduledPost, error)
+	// AddScheduledPost добавляет запланированный пост и возвращает его айди
+	AddScheduledPost(scheduledPost *entity.ScheduledPost) (int, error)
+	// EditScheduledPost редактирует запись о запланированном посте
+	EditScheduledPost(scheduledPost *entity.ScheduledPost) error
+	// DeleteScheduledPost удаляет запланированный пост
+	DeleteScheduledPost(postUnionID int) error
 
-	// GetPostAction возвращает действие на создание поста
-	GetPostAction(postUnionID int, platform string, last bool) (*entity.AddPostAction, error)
-	// AddPostAction добавляет действие на создание поста
-	AddPostAction(*entity.AddPostAction) (int, error)
-	// EditPostActionStatus изменяет статус действия на создание поста
-	EditPostActionStatus(postUnionID int, status, errorMessage string) error
+	// GetPostActions возвращает список id действий по ID поста
+	GetPostActions(postUnionID int) ([]int, error)
+	// GetPostAction возвращает действие по ID
+	GetPostAction(postActionID int) (*entity.PostAction, error)
+	// AddPostAction добавляет действие к посту и возвращает его айди
+	AddPostAction(postAction *entity.PostAction) (int, error)
+	// EditPostAction редактирует действие
+	EditPostAction(postAction *entity.PostAction) error
 
-	// Platforms
-
-	// GetLastUpdateTG возвращает id последнего обработанного event в telegram
-	GetLastUpdateTG() (int, error)
-	// SetLastUpdateTG устанавливает id последнего обработанного event в telegram
-	SetLastUpdateTG(updateID int) error
-	// AddPostVK добавляет пост в ВК
-	AddPostVK(postUnionID, postID int) error
-	// AddPostTG добавляет пост в Телеграм
-	AddPostTG(postUnionID, postID int) error
-	// GetPostTGByMessageID возвращает пост в Телеграм по его идентификатору
-	GetPostTGByMessageID(messageID int) (*entity.PostTG, error)
+	// GetPostPlatform возвращает пост с платформы по ID поста
+	GetPostPlatform(postUnionID int, platform string) (*entity.PostPlatform, error)
+	// GetPostPlatformByPlatformPostID возвращает пост с платформы по ID поста
+	GetPostPlatformByPlatformPostID(platformID int, platform string) (*entity.PostPlatform, error)
+	// AddPostPlatform добавляет связанную с PostUnion запись про пост, опубликованный на платформе
+	AddPostPlatform(postPlatform *entity.PostPlatform) (int, error)
+	DeletePostPlatform() error
 }
+
+var (
+	ErrPostPlatformNotFound = errors.New("post platform not found")
+)

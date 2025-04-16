@@ -37,6 +37,20 @@ services:
       - minio-data:/data
     command: server --console-address ":9001" /data
 
+  gateway:
+    container_name: gateway
+    build:
+      dockerfile: docker/Dockerfile
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file:
+      - .env
+    depends_on:
+      - cockroach
+      - minio
+
+
 volumes:
   kafka-data:
   minio-data:

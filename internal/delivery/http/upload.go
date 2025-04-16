@@ -11,16 +11,14 @@ import (
 )
 
 type Upload struct {
-	uploadUseCase  usecase.Upload
-	userUseCase    usecase.User
-	cookiesManager *utils.CookieManager
+	uploadUseCase usecase.Upload
+	authManager   utils.Auth
 }
 
-func NewUpload(uploadUseCase usecase.Upload, userUseCase usecase.User, cookiesManager *utils.CookieManager) *Upload {
+func NewUpload(uploadUseCase usecase.Upload, authManager utils.Auth) *Upload {
 	return &Upload{
-		uploadUseCase:  uploadUseCase,
-		userUseCase:    userUseCase,
-		cookiesManager: cookiesManager,
+		uploadUseCase: uploadUseCase,
+		authManager:   authManager,
 	}
 }
 
@@ -30,8 +28,7 @@ func (u *Upload) Configure(server *echo.Group) {
 }
 
 func (u *Upload) Upload(c echo.Context) error {
-	// Извлекаем из куки айди пользователя
-	userID, err := u.cookiesManager.GetUserIDFromContext(c)
+	userID, err := u.authManager.CheckAuthFromContext(c)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, echo.Map{
 			"error": "Пользователь не авторизован",
@@ -48,9 +45,9 @@ func (u *Upload) Upload(c echo.Context) error {
 
 	// Извлекаем пометку, с которой загрузили файл (photo/video/raw)
 	fileType := c.FormValue("type")
-	if fileType == "" || (fileType != "photo" && fileType != "video" && fileType != "raw") {
+	if fileType == "" || (fileType != "photo" && fileType != "video") {
 		return c.JSON(http.StatusBadRequest, echo.Map{
-			"error": "Неверный тип файла. Допустимые типы: photo, video, raw",
+			"error": "Неверный тип файла. Допустимые типы: photo, video",
 		})
 	}
 
@@ -64,16 +61,10 @@ func (u *Upload) Upload(c echo.Context) error {
 	defer func() { _ = fileBytes.Close() }()
 
 	upload := &entity.Upload{
-		UserID:   userID,
+		UserID:   &userID,
 		FilePath: file.Filename,
 		FileType: fileType,
-		RawBytes: make([]byte, file.Size),
-	}
-	_, err = io.ReadFull(fileBytes, upload.RawBytes)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": "Ошибка чтения файла: " + err.Error(),
-		})
+		RawBytes: fileBytes,
 	}
 
 	fileID, err := u.uploadUseCase.UploadFile(upload)
@@ -90,8 +81,7 @@ func (u *Upload) Upload(c echo.Context) error {
 }
 
 func (u *Upload) GetFile(c echo.Context) error {
-	// Извлекаем из куки айди пользователя
-	userID, err := u.cookiesManager.GetUserIDFromContext(c)
+	_, err := u.authManager.CheckAuthFromContext(c)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, echo.Map{
 			"error": "Пользователь не авторизован",
@@ -104,11 +94,17 @@ func (u *Upload) GetFile(c echo.Context) error {
 		})
 	}
 
-	file, err := u.uploadUseCase.GetUpload(fileID, userID)
+	file, err := u.uploadUseCase.GetUpload(fileID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{
 			"error": "Ошибка получения файла: " + err.Error(),
 		})
 	}
-	return c.Blob(http.StatusOK, http.DetectContentType(file.RawBytes), file.RawBytes)
+	fileBytes, err := io.ReadAll(file.RawBytes)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Ошибка чтения файла: " + err.Error(),
+		})
+	}
+	return c.Blob(http.StatusOK, http.DetectContentType(fileBytes), fileBytes)
 }

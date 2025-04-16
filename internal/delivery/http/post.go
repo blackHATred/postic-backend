@@ -1,34 +1,39 @@
 package http
 
 import (
+	"errors"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/gommon/log"
 	"net/http"
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/usecase"
-	"strconv"
+	"time"
 )
 
 type Post struct {
-	cookiesManager *utils.CookieManager
-	postUseCase    usecase.Post
+	authManager utils.Auth
+	postUseCase usecase.PostUnion
 }
 
-func NewPost(cookiesManager *utils.CookieManager, postUseCase usecase.Post) *Post {
+func NewPost(authManager utils.Auth, postUseCase usecase.PostUnion) *Post {
 	return &Post{
-		cookiesManager: cookiesManager,
-		postUseCase:    postUseCase,
+		authManager: authManager,
+		postUseCase: postUseCase,
 	}
 }
 
 func (p *Post) Configure(server *echo.Group) {
 	server.POST("/add", p.AddPost)
+	server.POST("/edit", p.EditPost)
+	server.DELETE("/delete", p.DeletePost)
+	server.GET("/get", p.GetPost)
 	server.GET("/list", p.GetPosts)
-	server.GET("/status/:id", p.GetPostStatus)
+	server.GET("/status", p.GetPostStatus)
 }
 
 func (p *Post) AddPost(c echo.Context) error {
-	userID, err := p.cookiesManager.GetUserIDFromContext(c)
+	userID, err := p.authManager.CheckAuthFromContext(c)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, echo.Map{
 			"error": "Пользователь не авторизован",
@@ -42,31 +47,162 @@ func (p *Post) AddPost(c echo.Context) error {
 			"error": "Неверный формат запроса",
 		})
 	}
-	request.UserId = userID
+	request.UserID = userID
 
-	postId, err := p.postUseCase.AddPost(request)
-	if err != nil {
+	log.Infof("%v", request)
+
+	postId, actionIDs, err := p.postUseCase.AddPostUnion(request)
+	switch {
+	case errors.Is(err, usecase.ErrUserForbidden):
+		return c.JSON(http.StatusForbidden, echo.Map{
+			"error": "У вас нет прав на создание постов в этой команде",
+		})
+	case err != nil:
+		c.Logger().Errorf("error adding post: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{
 			"error": err.Error(),
 		})
 	}
 
 	return c.JSON(http.StatusOK, echo.Map{
-		"status":  "ok",
-		"post_id": postId,
+		"status":    "ok",
+		"actionIDs": actionIDs,
+		"post_id":   postId,
 	})
 }
 
-func (p *Post) GetPosts(c echo.Context) error {
-	userID, err := p.cookiesManager.GetUserIDFromContext(c)
+func (p *Post) EditPost(c echo.Context) error {
+	userID, err := p.authManager.CheckAuthFromContext(c)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, echo.Map{
 			"error": "Пользователь не авторизован",
 		})
 	}
 
-	posts, err := p.postUseCase.GetPosts(userID)
+	request := &entity.EditPostRequest{}
+	err = utils.ReadJSON(c, request)
 	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат запроса",
+		})
+	}
+	request.UserID = userID
+	actionIDs, err := p.postUseCase.EditPostUnion(request)
+	switch {
+	case errors.Is(err, usecase.ErrUserForbidden):
+		return c.JSON(http.StatusForbidden, echo.Map{
+			"error": "У вас нет прав на редактирование постов в этой команде",
+		})
+	case err != nil:
+		c.Logger().Errorf("error editing post: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, echo.Map{
+		"status":    "ok",
+		"actionIDs": actionIDs,
+	})
+}
+
+func (p *Post) DeletePost(c echo.Context) error {
+	userID, err := p.authManager.CheckAuthFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	}
+
+	request := &entity.DeletePostRequest{}
+	err = utils.ReadJSON(c, request)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат запроса",
+		})
+	}
+	request.UserID = userID
+	actionIDs, err := p.postUseCase.DeletePostUnion(request)
+	switch {
+	case errors.Is(err, usecase.ErrUserForbidden):
+		return c.JSON(http.StatusForbidden, echo.Map{
+			"error": "У вас нет прав на удаление постов в этой команде",
+		})
+	case err != nil:
+		c.Logger().Errorf("error deleting post: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, echo.Map{
+		"status":    "ok",
+		"actionIDs": actionIDs,
+	})
+}
+
+func (p *Post) GetPost(c echo.Context) error {
+	userID, err := p.authManager.CheckAuthFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	}
+
+	request := &entity.GetPostRequest{}
+	err = utils.ReadQuery(c, request)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат запроса",
+		})
+	}
+	request.UserID = userID
+	post, err := p.postUseCase.GetPostUnion(request)
+	switch {
+	case errors.Is(err, usecase.ErrUserForbidden):
+		return c.JSON(http.StatusForbidden, echo.Map{
+			"error": "У вас нет прав на получение постов в этой команде",
+		})
+	case err != nil:
+		c.Logger().Errorf("error getting post: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, echo.Map{
+		"post": post,
+	})
+}
+
+func (p *Post) GetPosts(c echo.Context) error {
+	userID, err := p.authManager.CheckAuthFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	}
+
+	request := &entity.GetPostsRequest{}
+	err = utils.ReadQuery(c, request)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат запроса",
+		})
+	}
+	request.UserID = userID
+	if request.Offset == nil {
+		currentTime := time.Now()
+		request.Offset = &currentTime
+	}
+	posts, err := p.postUseCase.GetPosts(request)
+	switch {
+	case errors.Is(err, usecase.ErrUserForbidden):
+		return c.JSON(http.StatusForbidden, echo.Map{
+			"error": "У вас нет прав на получение постов в этой команде",
+		})
+	case err != nil:
+		c.Logger().Errorf("error getting posts: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{
 			"error": err.Error(),
 		})
@@ -78,20 +214,21 @@ func (p *Post) GetPosts(c echo.Context) error {
 }
 
 func (p *Post) GetPostStatus(c echo.Context) error {
-	postID := c.Param("id")
-	id, err := strconv.Atoi(postID)
+	userID, err := p.authManager.CheckAuthFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	}
+	request := &entity.PostStatusRequest{}
+	err = utils.ReadQuery(c, request)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
-			"error": "Неверный ID поста",
+			"error": "Неверный формат запроса",
 		})
 	}
-	platform := c.QueryParam("platform")
-	if platform == "" {
-		return c.JSON(http.StatusBadRequest, echo.Map{
-			"error": "Не указана платформа (query-param platform)",
-		})
-	}
-	status, err := p.postUseCase.GetPostStatus(id, platform)
+	request.UserID = userID
+	status, err := p.postUseCase.GetPostStatus(request)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{
 			"error": err.Error(),

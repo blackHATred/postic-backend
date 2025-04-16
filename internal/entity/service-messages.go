@@ -11,12 +11,3 @@ type Message struct {
 	Platform string `json:"platform"`
 	Text     string `json:"text"`
 }
-
-type ClientMessage struct {
-	// VkKey
-	VkKey string `json:"vk_key"`
-	// VkGroupId
-	VkGroupId int `json:"vk_group_id"`
-	// TgChatId
-	TgChatId int64 `json:"tg_chat_id"`
-}

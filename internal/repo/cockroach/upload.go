@@ -19,12 +19,12 @@ type Upload struct {
 func NewUpload(db *sqlx.DB, minioClient *minio.Client) (repo.Upload, error) {
 	// Создаем бакет для user uploads, предварительно проверив, что его нет
 	ctx := context.TODO()
-	exists, err := minioClient.BucketExists(ctx, "user-uploads")
+	exists, err := minioClient.BucketExists(ctx, "mediafiles")
 	if err != nil {
 		return nil, err
 	}
 	if !exists {
-		err = minioClient.MakeBucket(ctx, "user-uploads", minio.MakeBucketOptions{
+		err = minioClient.MakeBucket(ctx, "mediafiles", minio.MakeBucketOptions{
 			Region:        "eu-central-1", // Предположим, что мы центральные европейцы
 			ObjectLocking: true,
 		})
@@ -38,7 +38,7 @@ func NewUpload(db *sqlx.DB, minioClient *minio.Client) (repo.Upload, error) {
 	}, nil
 }
 
-func (u Upload) GetUpload(id int) (*entity.Upload, error) {
+func (u *Upload) GetUpload(id int) (*entity.Upload, error) {
 	// Получаем upload из БД, потом загружаем его из S3
 	upload := &entity.Upload{}
 	query := `SELECT * FROM mediafile WHERE id = $1`
@@ -47,7 +47,7 @@ func (u Upload) GetUpload(id int) (*entity.Upload, error) {
 		return nil, err
 	}
 	ctx := context.TODO()
-	object, err := u.minioClient.GetObject(ctx, "user-uploads", upload.FilePath, minio.GetObjectOptions{
+	object, err := u.minioClient.GetObject(ctx, "mediafiles", upload.FilePath, minio.GetObjectOptions{
 		Checksum: true,
 	})
 	if err != nil {
@@ -57,7 +57,17 @@ func (u Upload) GetUpload(id int) (*entity.Upload, error) {
 	return upload, nil
 }
 
-func (u Upload) UploadFile(upload *entity.Upload) (int, error) {
+func (u *Upload) GetUploadInfo(id int) (*entity.Upload, error) {
+	upload := &entity.Upload{}
+	query := `SELECT * FROM mediafile WHERE id = $1`
+	err := u.db.Get(upload, query, id)
+	if err != nil {
+		return nil, err
+	}
+	return upload, err
+}
+
+func (u *Upload) UploadFile(upload *entity.Upload) (int, error) {
 	// Добавляем файл в S3 хранилище и создаём запись в БД
 	ctx := context.TODO()
 	rawBytes, err := io.ReadAll(upload.RawBytes)
@@ -81,7 +91,7 @@ func (u Upload) UploadFile(upload *entity.Upload) (int, error) {
 		return 0, err
 	}
 	var uploadID int
-	if upload.UserID == 0 {
+	if upload.UserID == nil {
 		// Если загрузка не привязана к пользователю, то просто добавляем в БД
 		query := `INSERT INTO mediafile (file_path, file_type) VALUES ($1, $2) RETURNING id`
 		err = u.db.QueryRow(query, upload.FilePath, upload.FileType).Scan(&uploadID)

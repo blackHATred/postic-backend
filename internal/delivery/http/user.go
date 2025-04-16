@@ -26,7 +26,7 @@ func NewUser(userUseCase usecase.User, authManager utils.Auth, cookieManager uti
 
 func (u *User) Configure(server *echo.Group) {
 	server.POST("/register", u.Register)
-	server.GET("/login", u.Login)
+	server.POST("/login", u.Login)
 	server.GET("/me", u.Me)
 	server.PUT("/set/vk", u.SetVK)
 }
@@ -68,6 +68,8 @@ func (u *User) Login(c echo.Context) error {
 			"error": "Произошла непредвиденная ошибка",
 		})
 	}
+	expires := time.Now().AddDate(1, 0, 0)
+	c.SetCookie(u.cookieManager.SetSessionCookie(token, expires))
 	return c.JSON(http.StatusOK, echo.Map{
 		"token": token,
 	})
@@ -112,7 +114,7 @@ func (u *User) SetVK(c echo.Context) error {
 			"error": "Произошла непредвиденная ошибка",
 		})
 	}
-	err = u.userUseCase.SetVK(userId, vkRequest.GroupID, vkRequest.APIKey)
+	err = u.userUseCase.SetVK(userId, vkRequest.GroupID, vkRequest.ApiKey)
 	if err != nil {
 		c.Logger().Errorf("Ошибка при установке группы ВК: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{

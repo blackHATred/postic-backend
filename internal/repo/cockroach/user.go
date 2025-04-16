@@ -28,7 +28,7 @@ func (u *User) AddUser() (int, error) {
 
 func (u *User) GetUser(userID int) (*entity.User, error) {
 	var user entity.User
-	query := `SELECT id, secret FROM "user" WHERE id = $1`
+	query := `SELECT id FROM "user" WHERE id = $1`
 	err := u.db.Get(&user, query, userID)
 	if err != nil {
 		return nil, err
@@ -38,7 +38,7 @@ func (u *User) GetUser(userID int) (*entity.User, error) {
 
 func (u *User) GetUserBySecret(secret string) (*entity.User, error) {
 	var user entity.User
-	query := `SELECT id, secret FROM "user" WHERE secret = $1`
+	query := `SELECT id FROM "user" WHERE secret = $1`
 	err := u.db.Get(&user, query, secret)
 	if err != nil {
 		return nil, err
