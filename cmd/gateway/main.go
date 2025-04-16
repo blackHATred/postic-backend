@@ -30,9 +30,17 @@ func main() {
 	}
 	telegramBotToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	jwtSecret := os.Getenv("JWT_SECRET")
+	dbConnectDSN := os.Getenv("DB_CONNECT_DSN")
+	minioEndpoint := os.Getenv("MINIO_ENDPOINT")
+	minioAccessKey := os.Getenv("MINIO_ACCESS_KEY")
+	minioSecretKey := os.Getenv("MINIO_SECRET_KEY")
+	minioUseSSL := false
+	corsOrigin := os.Getenv("CORS_ORIGIN")
+	summarizeURL := os.Getenv("SUMMARIZE_URL")
+	replyIdeasURL := os.Getenv("REPLY_IDEAS_URL")
 
 	// cockroach
-	DBConn, err := connector.GetCockroachConnector("user=root dbname=defaultdb sslmode=disable port=26257") // примерный вид dsn: "user=root dbname=defaultdb sslmode=disable"
+	DBConn, err := connector.GetCockroachConnector(dbConnectDSN) // примерный вид dsn: "user=root dbname=defaultdb sslmode=disable"
 	if err != nil {
 		log.Fatalf("Ошибка при подключении к базе данных: %v", err)
 	}
@@ -44,7 +52,7 @@ func main() {
 	}()
 
 	// minio
-	minioClient, err := connector.GetMinioConnector("localhost:9000", "minioadmin", "minioadmin", false)
+	minioClient, err := connector.GetMinioConnector(minioEndpoint, minioAccessKey, minioSecretKey, minioUseSSL)
 	if err != nil {
 		log.Fatalf("Ошибка при подключении к MinIO: %v", err)
 	}
@@ -83,8 +91,8 @@ func main() {
 		teamRepo,
 		telegramEventListener,
 		telegramCommentUseCase,
-		"http://leave-doing.gl.at.ply.gg:31585/sum",
-		"http://leave-doing.gl.at.ply.gg:31585/ans",
+		summarizeURL,
+		replyIdeasURL,
 	)
 
 	// запускаем сервисы delivery (обработка запросов)
@@ -117,7 +125,7 @@ func main() {
 	// CORS
 	echoServer.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(ctx echo.Context) error {
-			ctx.Response().Header().Set(echo.HeaderAccessControlAllowOrigin, "http://localhost:3000")
+			ctx.Response().Header().Set(echo.HeaderAccessControlAllowOrigin, corsOrigin)
 			ctx.Response().Header().Set(echo.HeaderAccessControlAllowMethods, strings.Join([]string{
 				http.MethodGet,
 				http.MethodPut,
@@ -166,6 +174,7 @@ func main() {
 	}(echoServer)
 	// Запуск слушателя событий Telegram. Если приходит сигнал завершения, то слушатель останавливается.
 	go telegramEventListener.StartListener()
+	defer telegramEventListener.StopListener()
 
 	<-sysCtx.Done()
 	ctx, cancel := context.WithTimeout(
@@ -176,5 +185,4 @@ func main() {
 	if err := echoServer.Shutdown(ctx); err != nil {
 		echoServer.Logger.Errorf("Во время выключения сервера возникла ошибка: %s\n", err)
 	}
-	telegramEventListener.StopListener()
 }
