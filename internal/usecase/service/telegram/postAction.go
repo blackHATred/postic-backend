@@ -198,11 +198,19 @@ func (t *Telegram) handleMultipleAttachments(request *entity.PostUnion, actionId
 		}
 
 		if len(messages) > 0 {
+			tgMediaGroupMessages := make([]entity.TgPostPlatformGroup, len(messages)-1)
+			for i, msg := range messages[1:] {
+				tgMediaGroupMessages[i] = entity.TgPostPlatformGroup{
+					PostPlatformID: messages[0].MessageID,
+					TgPostID:       msg.MessageID,
+				}
+			}
 			err := retry.Retry(func() error {
 				_, err := t.postRepo.AddPostPlatform(&entity.PostPlatform{
-					PostUnionId: request.ID,
-					PostId:      messages[0].MessageID,
-					Platform:    "tg",
+					PostUnionId:         request.ID,
+					PostId:              messages[0].MessageID,
+					Platform:            "tg",
+					TgPostPlatformGroup: tgMediaGroupMessages,
 				})
 				return err
 			})
@@ -402,6 +410,17 @@ func (t *Telegram) deletePostAsync(post *entity.PostUnion, actionId, tgChannelId
 		return
 	}
 
+	if postPlatform.TgPostPlatformGroup != nil && len(postPlatform.TgPostPlatformGroup) > 0 {
+		// сначала удаляем все связанные в медиагруппе сообщения
+		for _, tgPost := range postPlatform.TgPostPlatformGroup {
+			msg := tgbotapi.NewDeleteMessage(int64(tgPost.TgPostID), tgPost.PostPlatformID)
+			_, err = t.bot.Send(msg)
+			if err != nil {
+				t.updatePostActionStatus(actionId, "error", err.Error())
+				return
+			}
+		}
+	}
 	msg := tgbotapi.NewDeleteMessage(int64(tgChannelId), postPlatform.PostId)
 	_, err = t.bot.Send(msg)
 	if err != nil {
@@ -409,10 +428,12 @@ func (t *Telegram) deletePostAsync(post *entity.PostUnion, actionId, tgChannelId
 		return
 	}
 
-	t.updatePostActionStatus(actionId, "success", "")
-}
+	err = retry.Retry(func() error {
+		return t.postRepo.DeletePlatformFromPostUnion(post.ID, "tg")
+	})
+	if err != nil {
+		log.Errorf("error while deleting post platform: %v", err)
+	}
 
-func (t *Telegram) DoAction(request *entity.DoActionRequest) ([]int, error) {
-	//TODO implement me
-	panic("implement me")
+	t.updatePostActionStatus(actionId, "success", "")
 }

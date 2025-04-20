@@ -237,16 +237,15 @@ func (c *Comment) Subscribe(request *entity.Subscriber) (<-chan *entity.CommentE
 		PostUnionID: request.PostUnionID,
 	}
 
-	ch := make(chan *entity.CommentEvent)
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Если уже есть подписка, закрываем старый канал перед созданием нового
+	// Если уже есть подписка, возвращаем тот же канал
 	if oldCh, exists := c.subscribers[sub]; exists {
-		close(oldCh)
+		return oldCh, nil
 	}
 
+	ch := make(chan *entity.CommentEvent)
 	c.subscribers[sub] = ch
 
 	go func() {

@@ -84,11 +84,11 @@ type PostUnion struct {
 }
 
 type DoActionRequest struct {
-	UserID      int
-	TeamID      int
-	PostUnionID int    `db:"post_union_id"`
-	Operation   string `db:"op"`
-	Platform    string `db:"platform"`
+	UserID      int    `json:"-"`
+	TeamID      int    `json:"team_id"`
+	PostUnionID int    `json:"post_union_id" db:"post_union_id"`
+	Operation   string `json:"operation" db:"op"`
+	Platform    string `json:"platform" db:"platform"`
 }
 
 type PostAction struct {
@@ -105,11 +105,18 @@ type PostUnionList struct {
 	Posts []*PostUnion `json:"posts"`
 }
 
+type TgPostPlatformGroup struct {
+	TgPostID       int `db:"tg_post_id"`
+	PostPlatformID int `db:"post_platform_id"`
+}
+
 type PostPlatform struct {
 	ID          int    `db:"id"`
 	PostUnionId int    `db:"post_union_id"`
 	PostId      int    `db:"post_id"`
 	Platform    string `db:"platform"`
+
+	TgPostPlatformGroup []TgPostPlatformGroup // Есть только у Platform = tg
 }
 
 type PostStatusRequest struct {
