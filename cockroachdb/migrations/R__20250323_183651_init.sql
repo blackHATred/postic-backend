@@ -124,8 +124,8 @@ CREATE TABLE IF NOT EXISTS post_platform (
 CREATE TABLE IF NOT EXISTS tg_post_platform_group (
     tg_post_id INT NOT NULL PRIMARY KEY,
     post_platform_id INT NOT NULL,
-    FOREIGN KEY (post_platform_id) REFERENCES post_platform (id) ON DELETE CASCADE,
-)
+    FOREIGN KEY (post_platform_id) REFERENCES post_platform (id) ON DELETE CASCADE
+);
 
 -- Состояние бота в Telegram
 CREATE TABLE IF NOT EXISTS tg_bot_state (
@@ -165,8 +165,8 @@ CREATE INDEX IF NOT EXISTS idx_post_comment_post_union_id ON post_comment (post_
 CREATE TABLE IF NOT EXISTS tg_post_comment_group (
     tg_comment_id INT NOT NULL PRIMARY KEY,
     post_comment_id INT NOT NULL,
-    FOREIGN KEY (post_comment_id) REFERENCES post_comment (id) ON DELETE CASCADE,
-)
+    FOREIGN KEY (post_comment_id) REFERENCES post_comment (id) ON DELETE CASCADE
+);
 
 -- Attachments к комментарию
 CREATE TABLE IF NOT EXISTS post_comment_attachment (

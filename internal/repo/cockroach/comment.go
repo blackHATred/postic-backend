@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jmoiron/sqlx"
+	"github.com/labstack/gommon/log"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"time"
@@ -241,23 +242,95 @@ func (c *Comment) GetComments(postUnionID int, offset time.Time, before bool, li
 		sortOrder = "ASC" // Сначала более старые
 	}
 
+	/*
+		Этот запрос:
+		Сначала выбирает только корневые комментарии (без ответов) с применением LIMIT
+		Затем рекурсивно добавляет все ответы на эти комментарии любого уровня вложенности
+		Сохраняет исходную логику сортировки, располагая родительские комментарии перед ответами
+	*/
 	query := fmt.Sprintf(
 		`
-WITH all_comments AS (
- SELECT id, team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
-     full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
- FROM post_comment
- WHERE ($1 = 0 OR post_union_id = $1)
- AND created_at %s $2
- ORDER BY created_at %s
- LIMIT $3
+WITH RECURSIVE top_level_comments AS (
+    SELECT
+        id,
+        team_id,
+        "post_union_id",
+        platform,
+        post_platform_id,
+        user_platform_id,
+        comment_platform_id,
+        full_name,
+        username,
+        avatar_mediafile_id,
+        text,
+        reply_to_comment_id,
+        is_team_reply,
+        created_at
+    FROM post_comment
+    WHERE ($1 = 0 OR "post_union_id" = $1)
+      AND reply_to_comment_id = 0
+      AND created_at %s $2
+    ORDER BY created_at %s
+    LIMIT $3
+),
+comment_tree AS (
+    SELECT
+        id,
+        team_id,
+        "post_union_id",
+        platform,
+        post_platform_id,
+        user_platform_id,
+        comment_platform_id,
+        full_name,
+        username,
+        avatar_mediafile_id,
+        text,
+        reply_to_comment_id,
+        is_team_reply,
+        created_at
+    FROM top_level_comments
+
+    UNION ALL
+
+    SELECT
+        pc.id,
+        pc.team_id,
+        pc."post_union_id",
+        pc.platform,
+        pc.post_platform_id,
+        pc.user_platform_id,
+        pc.comment_platform_id,
+        pc.full_name,
+        pc.username,
+        pc.avatar_mediafile_id,
+        pc.text,
+        pc.reply_to_comment_id,
+        pc.is_team_reply,
+        pc.created_at
+    FROM post_comment pc
+    JOIN comment_tree ct ON pc.reply_to_comment_id = ct.id
 )
-SELECT id, team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
-    full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
-FROM all_comments
-ORDER BY CASE WHEN reply_to_comment_id IS NULL THEN 0 ELSE 1 END, created_at DESC
+SELECT
+    id,
+    team_id,
+    "post_union_id",
+    platform,
+    post_platform_id,
+    user_platform_id,
+    comment_platform_id,
+    full_name,
+    username,
+    avatar_mediafile_id,
+    text,
+    reply_to_comment_id,
+    is_team_reply,
+    created_at
+FROM comment_tree
+ORDER BY CASE WHEN reply_to_comment_id = 0 THEN 0 ELSE 1 END, created_at DESC
 `, comparator, sortOrder,
 	)
+	log.Info(query)
 	rows, err := c.db.Queryx(query, postUnionID, offset, limit)
 	if err != nil {
 		return nil, err

@@ -340,7 +340,6 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 	} else {
 		return nil
 	}
-
 	_, err := t.teamRepo.GetTGChannelByDiscussionId(discussionID)
 	if errors.Is(err, repo.ErrTGChannelNotFound) {
 		return nil
@@ -351,11 +350,20 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 	}
 
 	var postTg *entity.PostPlatform
+	var replyToComment *entity.Comment
 	if update.Message != nil && update.Message.ReplyToMessage != nil {
 		// является ответом на какой-то пост, а не просто сообщением в discussion
 		postTg, err = t.postRepo.GetPostPlatformByPlatformPostID(update.Message.ReplyToMessage.ForwardFromMessageID, "tg")
 		if errors.Is(err, repo.ErrPostPlatformNotFound) {
-			// если не найден пост, то просто игнорируем
+			// если не найден пост, то возможно это ответ на комментарий - в таком случае пытаемся найти его
+			replyToComment, err = t.commentRepo.GetCommentInfoByPlatformID(update.Message.ReplyToMessage.MessageID, "tg")
+			if errors.Is(err, repo.ErrCommentNotFound) {
+				// если не найден комментарий, то просто игнорируем
+				return nil
+			} else if err != nil {
+				log.Errorf("Failed to get comment: %v", err)
+				return err
+			}
 		} else if err != nil {
 			log.Errorf("Failed to get post_tg: %v", err)
 			return err
@@ -378,6 +386,9 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 			return err
 		}
 		existingComment.Text = update.Message.Text
+		if replyToComment != nil {
+			existingComment.ReplyToCommentID = replyToComment.ID
+		}
 		existingComment.Attachments, err = t.processAttachments(update)
 		if err != nil {
 			log.Errorf("Failed to process attachments: %v", err)
@@ -425,6 +436,9 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 		Username:          update.Message.From.UserName,
 		Text:              update.Message.Text,
 		CreatedAt:         update.Message.Time(),
+	}
+	if replyToComment != nil {
+		newComment.ReplyToCommentID = replyToComment.ID
 	}
 
 	// Загружаем фотку, сохраняем в S3, сохраняем в БД
