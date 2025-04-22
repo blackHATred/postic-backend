@@ -1,11 +1,14 @@
 package telegram
 
 import (
+	"bytes"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/google/uuid"
 	"github.com/labstack/gommon/log"
+	"io"
 	"net/http"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
@@ -154,6 +157,7 @@ func (t *EventListener) saveFile(fileID, fileType string) (int, error) {
 		log.Errorf("Failed to get file: %v", err)
 		return 0, err
 	}
+
 	// Получаем содержимое файла
 	url := file.Link(t.bot.Token)
 	resp, err := http.Get(url)
@@ -163,7 +167,13 @@ func (t *EventListener) saveFile(fileID, fileType string) (int, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// Проверка на TGS-стикер
+	isTGS := fileType == "sticker" && strings.HasSuffix(file.FilePath, ".tgs")
+
 	var extension string
+	var body io.Reader
+	body = resp.Body
+
 	if file.FilePath != "" && strings.Contains(file.FilePath, ".") {
 		// Extract extension from original Telegram file path
 		parts := strings.Split(file.FilePath, ".")
@@ -173,9 +183,31 @@ func (t *EventListener) saveFile(fileID, fileType string) (int, error) {
 		extension = getExtensionForType(fileType)
 	}
 
+	if isTGS {
+		// Читаем данные стикера
+		tgsData, err := io.ReadAll(body)
+		if err != nil {
+			log.Errorf("Failed to read sticker data: %v", err)
+			return 0, err
+		}
+		gzipReader, err := gzip.NewReader(bytes.NewReader(tgsData))
+		if err != nil {
+			log.Errorf("Failed to create gzip reader: %v", err)
+			return 0, err
+		}
+		defer func() { _ = gzipReader.Close() }()
+		lottieJSON, err := io.ReadAll(gzipReader)
+		if err != nil {
+			log.Errorf("Failed to read lottie JSON data: %v", err)
+			return 0, err
+		}
+		body = bytes.NewReader(lottieJSON)
+		extension = "json"
+	}
+
 	// Сохраняем в S3
 	upload := &entity.Upload{
-		RawBytes: resp.Body,
+		RawBytes: body,
 		FilePath: fmt.Sprintf("tg/%s.%s", uuid.New().String(), extension),
 		FileType: fileType,
 	}
@@ -497,7 +529,7 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 func (t *EventListener) processAttachments(update *tgbotapi.Update) ([]*entity.Upload, error) {
 	attachments := make([]*entity.Upload, 0)
 	if update.Message.Photo != nil {
-		uploadFileId, err := t.saveFile(update.Message.Photo[0].FileID, "photo")
+		uploadFileId, err := t.saveFile(update.Message.Photo[len(update.Message.Photo)-1].FileID, "photo")
 		if err != nil {
 			log.Errorf("Failed to save photo: %v", err)
 			return nil, err
