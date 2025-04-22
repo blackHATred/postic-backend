@@ -2,6 +2,12 @@ package entity
 
 import "time"
 
+type UpdatePostStatsRequest struct {
+	UserID      int `json:"-"`
+	TeamID      int `json:"team_id"`
+	PostUnionID int `json:"post_union_id"`
+}
+
 type GetStatsRequest struct {
 	UserID int       `query:"-"`
 	TeamID int       `query:"team_id"`
