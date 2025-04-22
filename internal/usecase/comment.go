@@ -44,9 +44,12 @@ type Comment interface {
 	DeleteComment(request *entity.DeleteCommentRequest) error
 	// ReplyIdeas предлагает варианты быстрого ответа на комментарий
 	ReplyIdeas(request *entity.ReplyIdeasRequest) (*entity.ReplyIdeasResponse, error)
+	// MarkAsTicket помечает комментарий как тикет
+	MarkAsTicket(request *entity.MarkAsTicketRequest) error
 }
 
 var (
+	ErrCommentNotFound          = errors.New("comment not found")
 	ErrReplyCommentUnavailable  = errors.New("reply comment unavailable")
 	ErrCannotGenerateReplyIdeas = errors.New("cannot generate reply ideas")
 )

@@ -334,6 +334,10 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 	// Проверяем, есть ли у нас такой канал
 	discussionID := 0
 	if update.Message != nil {
+		// сообщения от самого тг не учитываем
+		if update.Message.From.UserName == "" {
+			return nil
+		}
 		discussionID = int(update.Message.Chat.ID)
 	} else if update.EditedMessage != nil {
 		discussionID = int(update.EditedMessage.Chat.ID)

@@ -316,7 +316,7 @@ func (p *PostUnion) GetPostStatus(request *entity.PostStatusRequest) ([]*entity.
 	if err != nil {
 		return nil, err
 	}
-	responses := make([]*entity.PostActionResponse, 0, len(actionIDs))
+	responses := make([]*entity.PostActionResponse, len(actionIDs))
 
 	for i, actionID := range actionIDs {
 		action, err := p.postRepo.GetPostAction(actionID)

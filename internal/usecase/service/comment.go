@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"github.com/labstack/gommon/log"
 	"net/http"
 	"postic-backend/internal/entity"
@@ -56,7 +57,11 @@ func (c *Comment) ReplyIdeas(request *entity.ReplyIdeasRequest) (*entity.ReplyId
 	}
 
 	comment, err := c.commentRepo.GetCommentInfo(request.CommentID)
-	if err != nil {
+	switch {
+	case errors.Is(err, repo.ErrCommentNotFound):
+		// комментарий не найден, значит, его удалили
+		return &entity.ReplyIdeasResponse{Ideas: []string{}}, nil
+	case err != nil:
 		return nil, err
 	}
 
@@ -119,7 +124,11 @@ func (c *Comment) GetComment(request *entity.GetCommentRequest) (*entity.Comment
 	}
 
 	comment, err := c.commentRepo.GetCommentInfo(request.CommentID)
-	if err != nil {
+	switch {
+	case errors.Is(err, repo.ErrCommentNotFound):
+		// комментарий не найден, значит, его удалили
+		return nil, usecase.ErrCommentNotFound
+	case err != nil:
 		return nil, err
 	}
 	// проверяем, что комментарий принадлежит этой команде
@@ -157,7 +166,7 @@ func (c *Comment) GetLastComments(request *entity.GetCommentsRequest) ([]*entity
 
 	// Получаем комментарии из репозитория, используя текущее время как верхнюю границу
 	// для получения самых последних комментариев
-	comments, err := c.commentRepo.GetComments(request.PostUnionID, request.Offset, request.Before, request.Limit)
+	comments, err := c.commentRepo.GetComments(request.PostUnionID, request.Offset, request.Before, request.Limit, request.MarkedAsTicket)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +322,10 @@ func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 	}
 	// получаем оригинальный комментарий
 	comment, err := c.commentRepo.GetCommentInfo(request.CommentID)
-	if err != nil {
+	switch {
+	case errors.Is(err, repo.ErrCommentNotFound):
+		return 0, usecase.ErrCommentNotFound
+	case err != nil:
 		return 0, err
 	}
 	// делегируем отправку комментария в Telegram
@@ -334,12 +346,41 @@ func (c *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 	}
 	// получаем оригинальный комментарий
 	comment, err := c.commentRepo.GetCommentInfo(request.PostCommentID)
-	if err != nil {
+	switch {
+	case errors.Is(err, repo.ErrCommentNotFound):
+		return nil
+	case err != nil:
 		return err
 	}
 	// делегируем удаление комментария в Telegram
 	if comment.Platform == "tg" {
 		return c.telegramAction.DeleteComment(request)
+	}
+	return nil
+}
+
+func (c *Comment) MarkAsTicket(request *entity.MarkAsTicketRequest) error {
+	// проверяем права пользователя
+	roles, err := c.teamRepo.GetTeamUserRoles(request.TeamID, request.UserID)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(roles, repo.AdminRole) && !slices.Contains(roles, repo.CommentsRole) {
+		return usecase.ErrUserForbidden
+	}
+	// получаем оригинальный комментарий
+	comment, err := c.commentRepo.GetCommentInfo(request.PostCommentID)
+	switch {
+	case errors.Is(err, repo.ErrCommentNotFound):
+		return usecase.ErrCommentNotFound
+	case err != nil:
+		return err
+	}
+	// обновляем комментарий, помечая (или наоборот, убирая) его как тикет
+	comment.MarkedAsTicket = request.MarkedAsTicket
+	err = c.commentRepo.EditComment(comment)
+	if err != nil {
+		return err
 	}
 	return nil
 }
