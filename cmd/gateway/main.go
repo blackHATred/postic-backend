@@ -66,20 +66,25 @@ func main() {
 		log.Fatalf("Ошибка при создании репозитория Upload: %v", err)
 	}
 	commentRepo := cockroach.NewComment(DBConn)
+	analyticsRepo := cockroach.NewAnalytics(DBConn)
 	telegramListenerRepo := cockroach.NewTelegramListener(DBConn)
 
 	// запускаем сервисы usecase (бизнес-логика)
-	telegramPostPlatformUseCase, err := telegram.NewTelegram(telegramBotToken, postRepo, teamRepo, uploadRepo)
+	telegramPostPlatformUseCase, err := telegram.NewTelegramPost(telegramBotToken, postRepo, teamRepo, uploadRepo)
 	if err != nil {
-		log.Fatalf("Ошибка при создании Telegram UseCase: %v", err)
+		log.Fatalf("Ошибка при создании Post UseCase: %v", err)
 	}
 	telegramCommentUseCase, err := telegram.NewTelegramComment(telegramBotToken, commentRepo, teamRepo, uploadRepo)
 	if err != nil {
-		log.Fatalf("Ошибка при создании Telegram Comment UseCase: %v", err)
+		log.Fatalf("Ошибка при создании Post Comment UseCase: %v", err)
 	}
-	telegramEventListener, err := telegram.NewEventListener(telegramBotToken, false, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo)
+	telegramEventListener, err := telegram.NewTelegramEventListener(telegramBotToken, true, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo)
 	if err != nil {
-		log.Fatalf("Ошибка при создании слушателя событий Telegram: %v", err)
+		log.Fatalf("Ошибка при создании слушателя событий Post: %v", err)
+	}
+	telegramAnalytics, err := telegram.NewTelegramAnalyze(telegramBotToken, teamRepo, postRepo, analyticsRepo)
+	if err != nil {
+		log.Fatalf("Ошибка при создании Telegram Analyze: %v", err)
 	}
 	postUseCase := service.NewPostUnion(postRepo, teamRepo, uploadRepo, telegramPostPlatformUseCase)
 	userUseCase := service.NewUser(userRepo)
@@ -94,6 +99,7 @@ func main() {
 		summarizeURL,
 		replyIdeasURL,
 	)
+	analyticsUseCase := service.NewAnalytics(analyticsRepo, teamRepo, telegramAnalytics)
 
 	// запускаем сервисы delivery (обработка запросов)
 	cookieManager := utils.NewCookieManager(false)
@@ -103,6 +109,7 @@ func main() {
 	uploadDelivery := delivery.NewUpload(uploadUseCase, authManager)
 	teamDelivery := delivery.NewTeam(teamUseCase, authManager)
 	commentDelivery := delivery.NewComment(sysCtx, commentUseCase, authManager)
+	analyticsDelivery := delivery.NewAnalytics(analyticsUseCase, authManager)
 
 	// REST API
 	echoServer := echo.New()
@@ -166,13 +173,16 @@ func main() {
 	// teams
 	teams := api.Group("/teams")
 	teamDelivery.Configure(teams)
+	// analytics
+	analytics := api.Group("/analytics")
+	analyticsDelivery.Configure(analytics)
 
 	go func(server *echo.Echo) {
 		if err := server.Start("0.0.0.0:80"); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			server.Logger.Errorf("Сервер завершил свою работу по причине: %v\n", err)
 		}
 	}(echoServer)
-	// Запуск слушателя событий Telegram. Если приходит сигнал завершения, то слушатель останавливается.
+	// Запуск слушателя событий Post. Если приходит сигнал завершения, то слушатель останавливается.
 	go telegramEventListener.StartListener()
 	defer telegramEventListener.StopListener()
 

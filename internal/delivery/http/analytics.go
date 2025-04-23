@@ -9,25 +9,25 @@ import (
 	"postic-backend/internal/usecase"
 )
 
-type Analyze struct {
-	analyzeUseCase usecase.Analyze
+type Analytics struct {
+	analyzeUseCase usecase.Analytics
 	authManager    utils.Auth
 }
 
-func NewAnalyze(analyzeUseCase usecase.Analyze, authManager utils.Auth) *Analyze {
-	return &Analyze{
+func NewAnalytics(analyzeUseCase usecase.Analytics, authManager utils.Auth) *Analytics {
+	return &Analytics{
 		analyzeUseCase: analyzeUseCase,
 		authManager:    authManager,
 	}
 }
 
-func (a *Analyze) Configure(server *echo.Group) {
+func (a *Analytics) Configure(server *echo.Group) {
 	server.GET("/stats", a.GetStats)
 	server.GET("/stats/post", a.GetPostUnionStats)
 	server.POST("/stats/update", a.UpdatePostStats)
 }
 
-func (a *Analyze) GetStats(c echo.Context) error {
+func (a *Analytics) GetStats(c echo.Context) error {
 	userID, err := a.authManager.CheckAuthFromContext(c)
 	if err != nil {
 		return err
@@ -58,7 +58,7 @@ func (a *Analyze) GetStats(c echo.Context) error {
 	return c.JSON(http.StatusOK, stats)
 }
 
-func (a *Analyze) GetPostUnionStats(c echo.Context) error {
+func (a *Analytics) GetPostUnionStats(c echo.Context) error {
 	userID, err := a.authManager.CheckAuthFromContext(c)
 	if err != nil {
 		return err
@@ -89,7 +89,7 @@ func (a *Analyze) GetPostUnionStats(c echo.Context) error {
 	return c.JSON(http.StatusOK, stats)
 }
 
-func (a *Analyze) UpdatePostStats(c echo.Context) error {
+func (a *Analytics) UpdatePostStats(c echo.Context) error {
 	userID, err := a.authManager.CheckAuthFromContext(c)
 	if err != nil {
 		return err

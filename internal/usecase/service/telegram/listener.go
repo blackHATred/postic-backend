@@ -3,9 +3,11 @@ package telegram
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 	"github.com/google/uuid"
 	"github.com/labstack/gommon/log"
 	"io"
@@ -20,17 +22,20 @@ import (
 )
 
 type EventListener struct {
-	bot                       *tgbotapi.BotAPI
+	bot                       *bot.Bot
+	ctx                       context.Context
+	cancel                    context.CancelFunc
 	telegramEventListenerRepo repo.TelegramListener
 	teamRepo                  repo.Team
 	postRepo                  repo.Post
 	uploadRepo                repo.Upload
 	commentRepo               repo.Comment
+	analyticsRepo             repo.Analytics
 	subscribers               map[entity.Subscriber]chan *entity.CommentEvent
 	mu                        sync.Mutex
 }
 
-func NewEventListener(
+func NewTelegramEventListener(
 	token string,
 	debug bool,
 	telegramEventListenerRepo repo.TelegramListener,
@@ -38,65 +43,148 @@ func NewEventListener(
 	postRepo repo.Post,
 	uploadRepo repo.Upload,
 	commentRepo repo.Comment,
+	analyticsRepo repo.Analytics,
 ) (usecase.Listener, error) {
-	bot, err := tgbotapi.NewBotAPI(token)
+	lastUpdateID, err := telegramEventListenerRepo.GetLastUpdate()
+	for err != nil {
+		// Пытаемся постоянно получить последний event
+		log.Errorf("Post GetLastUpdate failed: %v", err)
+		time.Sleep(1 * time.Second)
+		lastUpdateID, err = telegramEventListenerRepo.GetLastUpdate()
+	}
+	opts := []bot.Option{
+		bot.WithInitialOffset(int64(lastUpdateID)),
+		bot.WithAllowedUpdates([]string{
+			"message",                // Обычные сообщения
+			"edited_message",         // Отредактированные сообщения
+			"message_reaction",       // Реакции на сообщения
+			"message_reaction_count", // Количество реакций
+		}),
+	}
+	if debug {
+		opts = append(opts, bot.WithDebug())
+	}
+
+	telegramBot, err := bot.New(token, opts...)
 	if err != nil {
 		return nil, err
 	}
-	bot.Debug = debug
-	log.Infof("Authorized on account %s", bot.Self.UserName)
+
+	// Создаем контекст с возможностью отмены
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Получаем информацию о боте
+	botInfo, err := telegramBot.GetMe(ctx)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	log.Infof("Authorized on account %s", botInfo.Username)
+
 	return &EventListener{
-		bot:                       bot,
+		bot:                       telegramBot,
+		ctx:                       ctx,
+		cancel:                    cancel,
 		telegramEventListenerRepo: telegramEventListenerRepo,
 		teamRepo:                  teamRepo,
 		postRepo:                  postRepo,
 		uploadRepo:                uploadRepo,
 		commentRepo:               commentRepo,
+		analyticsRepo:             analyticsRepo,
 		subscribers:               make(map[entity.Subscriber]chan *entity.CommentEvent),
 	}, nil
 }
 
 func (t *EventListener) StartListener() {
-	lastUpdateID, err := t.telegramEventListenerRepo.GetLastUpdate()
-	for err != nil {
-		// Пытаемся постоянно получить последний event
-		log.Errorf("Telegram GetLastUpdate failed: %v", err)
-		time.Sleep(1 * time.Second)
-		lastUpdateID, err = t.telegramEventListenerRepo.GetLastUpdate()
-	}
-	for {
-		u := tgbotapi.NewUpdate(lastUpdateID + 1)
-		u.Timeout = 60
-		updates := t.bot.GetUpdatesChan(u)
-		for update := range updates {
-			if update.Message != nil || update.EditedMessage != nil {
-				err = t.botProcessUpdate(&update)
+	// Настраиваем параметры для получения обновлений
+	t.bot.RegisterHandlerMatchFunc(
+		func(update *models.Update) bool {
+			return update.Message != nil || update.EditedMessage != nil || update.MessageReactionCount != nil
+		},
+		func(ctx context.Context, bot *bot.Bot, update *models.Update) {
+			if update.MessageReactionCount != nil || update.MessageReaction != nil {
+				// Обработка реакции на сообщение
+				log.Infof("Received reactions: %v", update.MessageReactionCount.Reactions)
+				t.UpdateStats(update)
+			} else if update.Message != nil || update.EditedMessage != nil {
+				err := t.botProcessUpdate(update)
 				if err != nil {
 					log.Errorf("Failed to process update: %v", err)
-					// если произошла ошибка, то пытаемся снова обработать update, перезапустив бота на том же
-					// update id
-					updates.Clear()
-				}
-				lastUpdateID = update.UpdateID
-				err = t.telegramEventListenerRepo.SetLastUpdate(lastUpdateID)
-				if err != nil {
-					log.Errorf("Failed to set last update: %v", err)
 				}
 			}
-		}
-	}
+		},
+	)
+	t.bot.Start(context.TODO())
 }
 
 func (t *EventListener) StopListener() {
-	// это автоматически закрывает канал updates в StartListener
-	t.bot.StopReceivingUpdates()
-	// закрываем все каналы подписчиков
+	// Отменяем контекст, что останавливает получение обновлений
+	t.cancel()
+
+	// Закрываем все каналы подписчиков
 	t.mu.Lock()
 	for _, ch := range t.subscribers {
 		close(ch)
 	}
 	t.subscribers = make(map[entity.Subscriber]chan *entity.CommentEvent)
 	t.mu.Unlock()
+}
+
+func (t *EventListener) UpdateStats(update *models.Update) {
+	post, err := t.postRepo.GetPostPlatformByPlatformPostID(update.MessageReactionCount.MessageID, "tg")
+	switch {
+	case errors.Is(err, repo.ErrPostPlatformNotFound):
+		// игнорируем такую ошибку
+	case err != nil:
+		log.Errorf("Failed to get post: %v", err)
+		return
+	}
+
+	// Подсчитываем общее количество реакций
+	totalReactions := 0
+	if update.MessageReactionCount.Reactions != nil {
+		for _, reaction := range update.MessageReactionCount.Reactions {
+			totalReactions += reaction.TotalCount
+		}
+	}
+
+	// Обновляем количество реакций под статистикой
+	existingStats, err := t.analyticsRepo.GetPostPlatformStatsByPostUnionID(post.PostUnionId, "tg")
+	switch {
+	case errors.Is(err, repo.ErrPostPlatformStatsNotFound):
+		// Если статистика не существует, создаём новую
+		postUnion, err := t.postRepo.GetPostUnion(post.PostUnionId)
+		if err != nil {
+			log.Errorf("Failed to get post union: %v", err)
+			return
+		}
+
+		newStats := &entity.PostPlatformStats{
+			TeamID:      postUnion.TeamID,
+			PostUnionID: postUnion.ID,
+			Platform:    "tg",
+			Views:       0,
+			Comments:    0,
+			Reactions:   totalReactions,
+			LastUpdate:  time.Now(),
+		}
+
+		err = t.analyticsRepo.AddPostPlatformStats(newStats)
+		if err != nil {
+			log.Errorf("Failed to add post platform stats: %v", err)
+		}
+	case err != nil:
+		log.Errorf("Failed to get post platform stats: %v", err)
+		return
+	default:
+		// Обновляем существующую статистику
+		existingStats.Reactions = totalReactions
+		err = t.analyticsRepo.EditPostPlatformStats(existingStats)
+		if err != nil {
+			log.Errorf("Failed to update post platform stats: %v", err)
+		}
+	}
 }
 
 func (t *EventListener) SubscribeToCommentEvents(userID, teamID, postUnionID int) <-chan *entity.CommentEvent {
@@ -152,14 +240,16 @@ func getExtensionForType(fileType string) string {
 }
 
 func (t *EventListener) saveFile(fileID, fileType string) (int, error) {
-	file, err := t.bot.GetFile(tgbotapi.FileConfig{FileID: fileID})
+	file, err := t.bot.GetFile(t.ctx, &bot.GetFileParams{
+		FileID: fileID,
+	})
 	if err != nil {
 		log.Errorf("Failed to get file: %v", err)
 		return 0, err
 	}
 
 	// Получаем содержимое файла
-	url := file.Link(t.bot.Token)
+	url := t.bot.FileDownloadLink(file)
 	resp, err := http.Get(url)
 	if err != nil {
 		log.Errorf("Failed to get file content: %v", err)
@@ -175,7 +265,7 @@ func (t *EventListener) saveFile(fileID, fileType string) (int, error) {
 	body = resp.Body
 
 	if file.FilePath != "" && strings.Contains(file.FilePath, ".") {
-		// Extract extension from original Telegram file path
+		// Extract extension from original Post file path
 		parts := strings.Split(file.FilePath, ".")
 		extension = parts[len(parts)-1]
 	} else {
@@ -219,66 +309,74 @@ func (t *EventListener) saveFile(fileID, fileType string) (int, error) {
 	return uploadFileId, nil
 }
 
-func (t *EventListener) handleForwardedMessage(update *tgbotapi.Update) error {
-	channel := update.Message.ForwardFromChat
-	if !channel.IsChannel() {
-		_, err := t.bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "❌ Сообщение переслано не из канала"))
+func (t *EventListener) handleForwardedMessage(update *models.Update) error {
+	channel := update.Message.ForwardOrigin
+	if channel.Type != models.MessageOriginTypeChannel {
+		_, err := t.bot.SendMessage(t.ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "❌ Сообщение переслано не из канала",
+		})
 		return err
 	}
-	channelID := channel.ID
-	admins, err := t.bot.GetChatAdministrators(tgbotapi.ChatAdministratorsConfig{
-		ChatConfig: tgbotapi.ChatConfig{
-			ChatID: channelID,
-		},
+	channelID := channel.MessageOriginChannel.Chat.ID
+	admins, err := t.bot.GetChatAdministrators(t.ctx, &bot.GetChatAdministratorsParams{
+		ChatID: channelID,
 	})
 	if err != nil {
-		_, err = t.bot.Send(
-			tgbotapi.NewMessage(
-				update.Message.Chat.ID,
-				"❌ Не удалось получить список администраторов канала. "+
-					"Проверьте, что бот добавлен в администраторы канала.",
-			),
-		)
+		_, err = t.bot.SendMessage(t.ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "❌ Не удалось получить список администраторов канала. Проверьте, что бот добавлен в администраторы канала.",
+		})
+		return err
+	}
+	// Получаем информацию о боте
+	botInfo, err := t.bot.GetMe(t.ctx)
+	if err != nil {
 		return err
 	}
 	isAdmin := false
 	for _, admin := range admins {
-		if admin.User.ID == t.bot.Self.ID {
+		if admin.Administrator.User.ID == botInfo.ID {
 			isAdmin = true
 			break
 		}
 	}
-	var discussionID int64
-	chat, err := t.bot.GetChat(tgbotapi.ChatInfoConfig{
-		ChatConfig: tgbotapi.ChatConfig{ChatID: channelID},
+	// Получаем информацию о чате
+	chat, err := t.bot.GetChat(t.ctx, &bot.GetChatParams{
+		ChatID: channelID,
 	})
 	if err != nil {
 		return err
+	}
+	var discussionID int64
+	if chat.LinkedChatID != 0 {
+		discussionID = chat.LinkedChatID
 	}
 	if chat.LinkedChatID != 0 {
 		discussionID = chat.LinkedChatID
 	}
 	var isDiscussionAdmin bool
 	if discussionID != 0 {
-		chatMember, err := t.bot.GetChatMember(tgbotapi.GetChatMemberConfig{
-			ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
-				ChatID: discussionID,
-				UserID: t.bot.Self.ID,
-			},
+		chatMember, err := t.bot.GetChatMember(t.ctx, &bot.GetChatMemberParams{
+			ChatID: discussionID,
+			UserID: botInfo.ID,
 		})
 		if err != nil {
-			// ошибка может возвращаться в том случае, если бот - не админ в обсуждениях
 			isDiscussionAdmin = false
 		} else {
-			isDiscussionAdmin = chatMember.IsAdministrator()
+			isDiscussionAdmin = chatMember.Type == models.ChatMemberTypeAdministrator ||
+				chatMember.Type == models.ChatMemberTypeOwner
 		}
 	}
+
+	// Формирование ответа
 	var response string
 	if isAdmin {
-		response = fmt.Sprintf("✅ Бот является админом в указанном канале \"%s\".\n", channel.Title)
+		response = fmt.Sprintf("✅ Бот является админом в указанном канале \"%s\".\n", channel.MessageOriginChannel.Chat.Title)
 	} else {
-		response = fmt.Sprintf("❌ Бот НЕ является админом в указанном канале \"%s\"\n", channel.Title)
+		response = fmt.Sprintf("❌ Бот НЕ является админом в указанном канале \"%s\"\n", channel.MessageOriginChannel.Chat.Title)
 	}
+
 	if discussionID != 0 {
 		if isDiscussionAdmin {
 			response += fmt.Sprintf(
@@ -297,77 +395,90 @@ func (t *EventListener) handleForwardedMessage(update *tgbotapi.Update) error {
 		response += fmt.Sprintf("\nID канала: %d\nОбсуждения не найдены", channelID)
 	}
 
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, response)
-	_, err = t.bot.Send(msg)
+	_, err = t.bot.SendMessage(t.ctx, &bot.SendMessageParams{
+		ChatID: update.Message.Chat.ID,
+		Text:   response,
+	})
 	return err
 }
 
-func (t *EventListener) handleCommand(update *tgbotapi.Update) error {
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, "")
-	switch update.Message.Command() {
+func (t *EventListener) handleCommand(update *models.Update) error {
+	command := strings.Split(update.Message.Text, " ")[0][1:] // Получаем команду без '/'
+	args := strings.TrimPrefix(update.Message.Text, "/"+command+" ")
+
+	// Создаем параметры для ответа
+	params := &bot.SendMessageParams{
+		ChatID: update.Message.Chat.ID,
+	}
+
+	switch command {
 	case "start":
-		msg.Text = "❇️ Привет! Я бот, управляющий телеграм-каналами пользователей Postic. " +
+		params.Text = "❇️ Привет! Я бот, управляющий телеграм-каналами пользователей Postic. " +
 			"Используйте команду /help, чтобы увидеть список доступных команд."
 	case "help":
-		msg.Text = "❇️ Чтобы получить ID канала и ID обсуждений канала, перешлите мне из канала любое сообщение.\n" +
+		params.Text = "❇️ Чтобы получить ID канала и ID обсуждений канала, перешлите мне из канала любое сообщение.\n" +
 			"Сначала убедитесь, что бот добавлен в администраторы канала и обсуждений (если у вас есть обсуждения, " +
 			"привязанные к каналу).\n\nСписок доступных команд:\n" +
 			"/start - Начать работу с ботом\n" +
 			"/help - Показать список команд\n" +
 			"/add_channel - Добавить канал. Если канал уже привязан, то вызов этой команды обновит его настройки"
 	case "add_channel":
-		args := update.Message.CommandArguments()
-		params := strings.Split(args, " ")
-		if len(params) > 3 || len(params) < 2 {
-			msg.Text = "❌ Неверное количество параметров. Используйте: " +
+		cmdArgs := strings.Split(args, " ")
+		if len(cmdArgs) > 3 || len(cmdArgs) < 2 {
+			params.Text = "❌ Неверное количество параметров. Используйте: " +
 				"/add_channel <ключ пользователя> <ID канала> <ID обсуждений (при наличии)>.\n" +
 				"Чтобы узнать, как получить ID канала и ID обсуждений, можете воспользоваться командой /help.\n" +
 				"Примеры использования:\n" +
 				"`/add_channel token123456 -123456789` - если у вас нет обсуждений\n" +
 				"`/add_channel token123456 -123456789 -123456789` - если у вас есть обсуждения"
-			_, err := t.bot.Send(msg)
+			_, err := t.bot.SendMessage(t.ctx, params)
 			return err
 		}
-		secretKey := params[0]
-		channelID, err := strconv.ParseInt(params[1], 10, 64)
+		secretKey := cmdArgs[0]
+		channelID, err := strconv.ParseInt(cmdArgs[1], 10, 64)
 		if err != nil || channelID >= 0 {
-			msg.Text = "Неверный формат channel_id. Используйте целое отрицательное число."
-			_, err := t.bot.Send(msg)
+			params.Text = "Неверный формат channel_id. Используйте целое отрицательное число."
+			_, err := t.bot.SendMessage(t.ctx, params)
 			return err
 		}
-		discussionID, err := strconv.ParseInt(params[2], 10, 64)
-		if err != nil || discussionID >= 0 {
-			msg.Text = "Неверный формат discussion_id. Используйте целое отрицательное число."
-			_, err := t.bot.Send(msg)
-			return err
+
+		var discussionID int64
+		if len(cmdArgs) > 2 {
+			discussionID, err = strconv.ParseInt(cmdArgs[2], 10, 64)
+			if err != nil || discussionID >= 0 {
+				params.Text = "Неверный формат discussion_id. Используйте целое отрицательное число."
+				_, err := t.bot.SendMessage(t.ctx, params)
+				return err
+			}
 		}
+
 		teamId, err := t.teamRepo.GetTeamIDBySecret(secretKey)
 		if err != nil {
-			msg.Text = "Неверный секретный ключ."
-			_, err := t.bot.Send(msg)
+			params.Text = "Неверный секретный ключ."
+			_, err := t.bot.SendMessage(t.ctx, params)
 			return err
 		}
 		err = t.teamRepo.PutTGChannel(teamId, int(channelID), int(discussionID))
 		if err != nil {
-			msg.Text = "Не удалось добавить канал. Обратитесь в поддержку для решения вопроса."
-			_, err := t.bot.Send(msg)
+			params.Text = "Не удалось добавить канал. Обратитесь в поддержку для решения вопроса."
+			_, err := t.bot.SendMessage(t.ctx, params)
 			return err
 		}
-		msg.Text = "Канал успешно добавлен. Перейдите в личный кабинет и обновите страницу."
+		params.Text = "Канал успешно добавлен. Перейдите в личный кабинет и обновите страницу."
 	default:
-		msg.Text = "Неизвестная команда. Используйте /help, чтобы увидеть список доступных команд."
+		params.Text = "Неизвестная команда. Используйте /help, чтобы увидеть список доступных команд."
 	}
 
-	_, err := t.bot.Send(msg)
+	_, err := t.bot.SendMessage(t.ctx, params)
 	return err
 }
 
-func (t *EventListener) handleComment(update *tgbotapi.Update) error {
+func (t *EventListener) handleComment(update *models.Update) error {
 	// Проверяем, есть ли у нас такой канал
 	discussionID := 0
 	if update.Message != nil {
 		// сообщения от самого тг не учитываем
-		if update.Message.From.UserName == "" {
+		if update.Message.From.Username == "" {
 			return nil
 		}
 		discussionID = int(update.Message.Chat.ID)
@@ -389,10 +500,10 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 	var replyToComment *entity.Comment
 	if update.Message != nil && update.Message.ReplyToMessage != nil {
 		// является ответом на какой-то пост, а не просто сообщением в discussion
-		postTg, err = t.postRepo.GetPostPlatformByPlatformPostID(update.Message.ReplyToMessage.ForwardFromMessageID, "tg")
+		postTg, err = t.postRepo.GetPostPlatformByPlatformPostID(int(update.Message.ReplyToMessage.ID), "tg")
 		if errors.Is(err, repo.ErrPostPlatformNotFound) {
 			// если не найден пост, то возможно это ответ на комментарий - в таком случае пытаемся найти его
-			replyToComment, err = t.commentRepo.GetCommentInfoByPlatformID(update.Message.ReplyToMessage.MessageID, "tg")
+			replyToComment, err = t.commentRepo.GetCommentInfoByPlatformID(update.Message.ReplyToMessage.ID, "tg")
 			if errors.Is(err, repo.ErrCommentNotFound) {
 				// если не найден комментарий, то просто игнорируем
 				return nil
@@ -413,7 +524,7 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 		log.Infof("Received edited message: %s", update.EditedMessage.Text)
 		update.Message = update.EditedMessage
 		eventType = "edited"
-		existingComment, err := t.commentRepo.GetCommentInfoByPlatformID(update.Message.MessageID, "tg")
+		existingComment, err := t.commentRepo.GetCommentInfoByPlatformID(update.Message.ID, "tg")
 		if errors.Is(err, repo.ErrCommentNotFound) {
 			return nil
 		}
@@ -467,18 +578,18 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 		Platform:          "tg",
 		PostPlatformID:    postPlatformID,
 		UserPlatformID:    int(update.Message.From.ID),
-		CommentPlatformID: update.Message.MessageID,
+		CommentPlatformID: update.Message.ID,
 		FullName:          fmt.Sprintf("%s %s", update.Message.From.FirstName, update.Message.From.LastName),
-		Username:          update.Message.From.UserName,
+		Username:          update.Message.From.Username,
 		Text:              update.Message.Text,
-		CreatedAt:         update.Message.Time(),
+		CreatedAt:         time.Unix(int64(update.Message.Date), 0),
 	}
 	if replyToComment != nil {
 		newComment.ReplyToCommentID = replyToComment.ID
 	}
 
 	// Загружаем фотку, сохраняем в S3, сохраняем в БД
-	photos, err := t.bot.GetUserProfilePhotos(tgbotapi.UserProfilePhotosConfig{
+	photos, err := t.bot.GetUserProfilePhotos(t.ctx, &bot.GetUserProfilePhotosParams{
 		UserID: update.Message.From.ID,
 		Limit:  1,
 	})
@@ -526,9 +637,9 @@ func (t *EventListener) handleComment(update *tgbotapi.Update) error {
 	return t.notifySubscribers(tgCommentId, postUnionIDint, int(update.Message.Chat.ID), eventType)
 }
 
-func (t *EventListener) processAttachments(update *tgbotapi.Update) ([]*entity.Upload, error) {
+func (t *EventListener) processAttachments(update *models.Update) ([]*entity.Upload, error) {
 	attachments := make([]*entity.Upload, 0)
-	if update.Message.Photo != nil {
+	if update.Message.Photo != nil && len(update.Message.Photo) > 0 {
 		uploadFileId, err := t.saveFile(update.Message.Photo[len(update.Message.Photo)-1].FileID, "photo")
 		if err != nil {
 			log.Errorf("Failed to save photo: %v", err)
@@ -610,29 +721,31 @@ func (t *EventListener) processAttachments(update *tgbotapi.Update) ([]*entity.U
 	return attachments, nil
 }
 
-func (t *EventListener) botProcessUpdate(update *tgbotapi.Update) error {
-	if update.Message != nil && update.Message.ForwardFromChat != nil && update.Message.Chat.IsPrivate() {
+func (t *EventListener) botProcessUpdate(update *models.Update) error {
+	if update.Message != nil &&
+		update.Message.ForwardOrigin != nil &&
+		update.Message.ForwardOrigin.MessageOriginChannel != nil &&
+		update.Message.Chat.Type == models.ChatTypePrivate {
 		// Пересланное сообщение из канала лично боту
 		return t.handleForwardedMessage(update)
 	}
-	if update.Message != nil && update.Message.ForwardFrom != nil && update.Message.Chat.IsPrivate() {
+	if update.Message != nil &&
+		update.Message.ForwardOrigin != nil &&
+		update.Message.Chat.Type == models.ChatTypePrivate {
 		// Пересланное сообщение лично боту, но это сообщение не из канала
-		_, err := t.bot.Send(
-			tgbotapi.NewMessage(
-				update.Message.Chat.ID,
-				"❌ Сообщение переслано не из канала.\n"+
-					"🔍 Пожалуйста, ознакомьтесь с функциями бота с помощью команды /help",
-			),
-		)
+		_, err := t.bot.SendMessage(t.ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text: "❌ Сообщение переслано не из канала.\n" +
+				"🔍 Пожалуйста, ознакомьтесь с функциями бота с помощью команды /help",
+		})
 		return err
 	}
-	if update.Message != nil && update.Message.Command() != "" {
-		// Обработка команд
+	if update.Message != nil && update.Message.Text != "" && strings.HasPrefix(update.Message.Text, "/") {
 		return t.handleCommand(update)
 	}
 	// Сообщение в обсуждениях
-	if (update.Message != nil && !update.Message.Chat.IsPrivate()) ||
-		(update.EditedMessage != nil && !update.EditedMessage.Chat.IsPrivate()) {
+	if (update.Message != nil && update.Message.Chat.Type != models.ChatTypePrivate) ||
+		(update.EditedMessage != nil && update.EditedMessage.Chat.Type != models.ChatTypePrivate) {
 		return t.handleComment(update)
 	}
 	return nil

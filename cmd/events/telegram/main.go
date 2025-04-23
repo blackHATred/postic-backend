@@ -51,9 +51,9 @@ func main() {
 	telegramListenerRepo := cockroach.NewTelegramListener(DBConn)
 	teamRepo := cockroach.NewTeam(DBConn)
 
-	eventListener, err := telegram.NewEventListener(botToken, true, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo)
+	eventListener, err := telegram.NewTelegramEventListener(botToken, true, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo)
 	if err != nil {
-		log.Fatalf("Ошибка при создании слушателя событий Telegram: %v", err)
+		log.Fatalf("Ошибка при создании слушателя событий Post: %v", err)
 	}
 
 	// Запуск GRPC
@@ -74,13 +74,13 @@ func main() {
 	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGKILL)
 
-	// Запуск слушателя событий Telegram. Если приходит сигнал завершения, то слушатель останавливается.
+	// Запуск слушателя событий Post. Если приходит сигнал завершения, то слушатель останавливается.
 	go eventListener.StartListener()
 	for {
 		select {
 		case <-sigchan:
 			log.Info("Получен сигнал завершения.")
-			log.Info("Остановка слушателя событий Telegram.")
+			log.Info("Остановка слушателя событий Post.")
 			eventListener.StopListener()
 			log.Info("Остановка gRPC сервера.")
 			grpcServer.GracefulStop()

@@ -22,7 +22,6 @@ type Comment struct {
 	mu          sync.Mutex // Add this line for thread safety
 }
 
-// NewTelegramComment создает новый экземпляр обработчика комментариев Telegram
 func NewTelegramComment(
 	token string,
 	commentRepo repo.Comment,
@@ -177,9 +176,9 @@ func (t *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 			return err
 		})
 		if err != nil {
-			log.Errorf("Не удалось удалить сообщение в Telegram: %v", err)
+			log.Errorf("Не удалось удалить сообщение в Post: %v", err)
 		} else {
-			log.Infof("Сообщение с ID %d успешно удалено из Telegram", sentMsg.MessageID)
+			log.Infof("Сообщение с ID %d успешно удалено из Post", sentMsg.MessageID)
 		}
 
 		return 0, usecase.ErrReplyCommentUnavailable
@@ -274,7 +273,7 @@ func (t *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 		})
 
 		if err != nil {
-			log.Errorf("Не удалось забанить пользователя в Telegram: %v", err)
+			log.Errorf("Не удалось забанить пользователя в Post: %v", err)
 		} else {
 			log.Infof("Пользователь с ID %d успешно забанен в канале %d", comment.UserPlatformID, discussionID)
 		}
