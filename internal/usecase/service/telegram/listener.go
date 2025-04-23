@@ -498,26 +498,40 @@ func (t *EventListener) handleComment(update *models.Update) error {
 
 	var postTg *entity.PostPlatform
 	var replyToComment *entity.Comment
-	if update.Message != nil &&
-		update.Message.ReplyToMessage != nil &&
-		update.Message.ReplyToMessage.ForwardOrigin != nil &&
-		update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel != nil {
-		// является ответом на какой-то пост, а не просто сообщением в discussion
-		log.Debugf("Received reply to message: %s", update.Message.ReplyToMessage.Text)
-		postTg, err = t.postRepo.GetPostPlatformByPlatformPostID(update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel.MessageID, "tg")
-		if errors.Is(err, repo.ErrPostPlatformNotFound) {
-			// если не найден пост, то возможно это ответ на комментарий - в таком случае пытаемся найти его
-			replyToComment, err = t.commentRepo.GetCommentInfoByPlatformID(update.Message.ReplyToMessage.ID, "tg")
-			if errors.Is(err, repo.ErrCommentNotFound) {
-				// если не найден комментарий, то просто игнорируем
-				return nil
+	if update.Message != nil && update.Message.ReplyToMessage != nil {
+		// Первый случай: Ответ на пересланное сообщение из канала
+		if update.Message.ReplyToMessage.ForwardOrigin != nil &&
+			update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel != nil {
+
+			log.Debugf("Received reply to forwarded post: %s", update.Message.ReplyToMessage.Text)
+			postTg, err = t.postRepo.GetPostPlatformByPlatformPostID(
+				update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel.MessageID, "tg")
+
+			if errors.Is(err, repo.ErrPostPlatformNotFound) {
+				// If not a post, try to find it as a comment
+				replyToComment, err = t.commentRepo.GetCommentInfoByPlatformID(update.Message.ReplyToMessage.ID, "tg")
+				if errors.Is(err, repo.ErrCommentNotFound) {
+					// If not found as a comment either, just ignore
+					log.Debugf("Reply target not found as post or comment, ignoring")
+				} else if err != nil {
+					log.Errorf("Failed to get comment: %v", err)
+					return err
+				}
 			} else if err != nil {
-				log.Errorf("Failed to get comment: %v", err)
+				log.Errorf("Failed to get post_tg: %v", err)
 				return err
 			}
-		} else if err != nil {
-			log.Errorf("Failed to get post_tg: %v", err)
-			return err
+		} else {
+			// Второй случай: Ответ на сообщение в обсуждении
+			log.Debugf("Received direct reply to comment: %s", update.Message.ReplyToMessage.Text)
+			replyToComment, err = t.commentRepo.GetCommentInfoByPlatformID(update.Message.ReplyToMessage.ID, "tg")
+			if errors.Is(err, repo.ErrCommentNotFound) {
+				// игнорим такие комментарии
+				log.Debugf("Reply target not found as comment, treating as regular comment")
+			} else if err != nil {
+				log.Errorf("Failed to get reply target comment: %v", err)
+				return err
+			}
 		}
 	}
 

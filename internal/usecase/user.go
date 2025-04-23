@@ -9,6 +9,4 @@ type User interface {
 	Login(userID int) (int, error)
 	// GetUser возвращает пользователя по его идентификатору
 	GetUser(userID int) (*entity.User, error)
-	// SetVK устанавливает группу ВКонтакте для пользователя
-	SetVK(userID int, vkGroupID int, apiKey string) error
 }

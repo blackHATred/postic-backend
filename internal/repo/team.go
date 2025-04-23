@@ -36,6 +36,9 @@ type Team interface {
 	PutTGChannel(teamId int, channelId int, discussionId int) error
 	// GetTGChannelByDiscussionId возвращает ID телеграм канала (в нашей системе, а не реальный) по ID обсуждения
 	GetTGChannelByDiscussionId(discussionId int) (int, error)
+
+	// PutVKGroup привязывает группу к команде
+	PutVKGroup(teamId int, groupId int, adminApiKey string, groupApiKey string) error
 }
 
 const (

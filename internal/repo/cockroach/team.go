@@ -166,3 +166,12 @@ func (t *Team) GetTeamIDByPostUnionID(postUnionID int) (int, error) {
 	}
 	return teamId, nil
 }
+
+func (t *Team) PutVKGroup(teamId int, groupId int, adminApiKey string, groupApiKey string) error {
+	_, err := t.db.Exec(
+		"INSERT INTO channel_vk (team_id, group_id, admin_api_key, group_api_key) VALUES ($1, $2, $3, $4) "+
+			"ON CONFLICT (team_id) DO UPDATE SET group_id = $2, admin_api_key = $3, group_api_key = $4, last_updated_timestamp = NOW()",
+		teamId, groupId, adminApiKey, groupApiKey,
+	)
+	return err
+}

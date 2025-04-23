@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS channel_vk (
     team_id INT NOT NULL UNIQUE,
     FOREIGN KEY (team_id) REFERENCES team (id) ON DELETE CASCADE,
     group_id INT NOT NULL,
-    api_key STRING(256) NOT NULL,
+    admin_api_key STRING(256) NOT NULL,
+    group_api_key STRING(256) NOT NULL,
     -- Время последнего обновления канала.
     -- Поле требуется для отслеживания того, какой инстанс микросервиса в данный момент отслеживает канал.
     -- Если инстанс упадёт, то через 5 минут другой инстанс сможет взять на себя управление каналом.
