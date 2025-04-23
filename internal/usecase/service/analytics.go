@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
@@ -39,7 +40,23 @@ func (a *Analytics) UpdatePostStats(request *entity.UpdatePostStatsRequest) erro
 	// Проверяем, когда было последнее обновление по каждой из платформ. Если прошло меньше 5 минут, то не обновляем
 	for _, platform := range []string{"tg"} {
 		stats, err := a.analyticsRepo.GetPostPlatformStatsByPostUnionID(request.PostUnionID, platform)
-		if err != nil {
+		switch {
+		case errors.Is(err, repo.ErrPostPlatformStatsNotFound):
+			// Если статистики нет, то добавляем новую
+			stats = &entity.PostPlatformStats{
+				TeamID:      request.TeamID,
+				PostUnionID: request.PostUnionID,
+				Platform:    platform,
+				Views:       0,
+				Reactions:   0,
+				Comments:    0,
+				LastUpdate:  time.Now(),
+			}
+			err = a.analyticsRepo.AddPostPlatformStats(stats)
+			if err != nil {
+				return err
+			}
+		case err != nil:
 			return err
 		}
 		if stats.LastUpdate.Add(5 * time.Minute).After(time.Now()) {
@@ -102,7 +119,19 @@ func (a *Analytics) GetPostUnionStats(request *entity.GetPostUnionStatsRequest) 
 	}
 
 	tgStats, err := a.analyticsRepo.GetPostPlatformStatsByPostUnionID(request.PostUnionID, "tg")
-	if err != nil {
+	switch {
+	case errors.Is(err, repo.ErrPostPlatformStatsNotFound):
+		// Если статистики нет, то добавляем новую
+		tgStats = &entity.PostPlatformStats{
+			TeamID:      request.TeamID,
+			PostUnionID: request.PostUnionID,
+			Platform:    "tg",
+			Views:       0,
+			Reactions:   0,
+			Comments:    0,
+			LastUpdate:  time.Now(),
+		}
+	case err != nil:
 		return nil, err
 	}
 	// todo другие платформы

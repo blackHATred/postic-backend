@@ -103,7 +103,7 @@ func (t *EventListener) StartListener() {
 			return update.Message != nil || update.EditedMessage != nil || update.MessageReactionCount != nil
 		},
 		func(ctx context.Context, bot *bot.Bot, update *models.Update) {
-			if update.MessageReactionCount != nil || update.MessageReaction != nil {
+			if update.MessageReactionCount != nil {
 				// Обработка реакции на сообщение
 				log.Infof("Received reactions: %v", update.MessageReactionCount.Reactions)
 				t.UpdateStats(update)
@@ -498,8 +498,12 @@ func (t *EventListener) handleComment(update *models.Update) error {
 
 	var postTg *entity.PostPlatform
 	var replyToComment *entity.Comment
-	if update.Message != nil && update.Message.ReplyToMessage != nil {
+	if update.Message != nil &&
+		update.Message.ReplyToMessage != nil &&
+		update.Message.ReplyToMessage.ForwardOrigin != nil &&
+		update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel != nil {
 		// является ответом на какой-то пост, а не просто сообщением в discussion
+		log.Debugf("Received reply to message: %s", update.Message.ReplyToMessage.Text)
 		postTg, err = t.postRepo.GetPostPlatformByPlatformPostID(update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel.MessageID, "tg")
 		if errors.Is(err, repo.ErrPostPlatformNotFound) {
 			// если не найден пост, то возможно это ответ на комментарий - в таком случае пытаемся найти его
@@ -521,7 +525,7 @@ func (t *EventListener) handleComment(update *models.Update) error {
 
 	// Если это редактирование, проверяем существующий комментарий
 	if update.EditedMessage != nil {
-		log.Infof("Received edited message: %s", update.EditedMessage.Text)
+		log.Debugf("Received edited message: %s", update.EditedMessage.Text)
 		update.Message = update.EditedMessage
 		eventType = "edited"
 		existingComment, err := t.commentRepo.GetCommentInfoByPlatformID(update.Message.ID, "tg")
