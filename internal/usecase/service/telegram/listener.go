@@ -136,6 +136,7 @@ func (t *EventListener) UpdateStats(update *models.Update) {
 	switch {
 	case errors.Is(err, repo.ErrPostPlatformNotFound):
 		// игнорируем такую ошибку
+		return
 	case err != nil:
 		log.Errorf("Failed to get post: %v", err)
 		return

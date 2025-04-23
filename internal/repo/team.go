@@ -20,6 +20,7 @@ type Team interface {
 	GetTeamIDByPostUnionID(postUnionID int) (int, error)
 	// GetTeamIDByTGDiscussionID возвращает ID команды по ID обсуждения
 	GetTeamIDByTGDiscussionID(discussionId int) (int, error)
+	GetTeamIDByVKGroupID(groupId int) (int, error)
 
 	// GetUserTeams возвращает список айди команд пользователя
 	GetUserTeams(userID int) ([]int, error)

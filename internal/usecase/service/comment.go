@@ -14,15 +14,16 @@ import (
 )
 
 type Comment struct {
-	commentRepo      repo.Comment
-	postRepo         repo.Post
-	teamRepo         repo.Team
-	telegramListener usecase.Listener
-	telegramAction   usecase.CommentActionPlatform
-	summarizeURL     string
-	replyIdeasURL    string
-	subscribers      map[entity.Subscriber]chan *entity.CommentEvent
-	mu               sync.Mutex
+	commentRepo       repo.Comment
+	postRepo          repo.Post
+	teamRepo          repo.Team
+	telegramListener  usecase.Listener
+	telegramAction    usecase.CommentActionPlatform
+	vkontakteListener usecase.Listener
+	summarizeURL      string
+	replyIdeasURL     string
+	subscribers       map[entity.Subscriber]chan *entity.CommentEvent
+	mu                sync.Mutex
 }
 
 func NewComment(
@@ -31,18 +32,20 @@ func NewComment(
 	teamRepo repo.Team,
 	telegramListener usecase.Listener,
 	telegramAction usecase.CommentActionPlatform,
+	vkontakteListener usecase.Listener,
 	summarizeURL string,
 	replyIdeasURL string,
 ) usecase.Comment {
 	return &Comment{
-		commentRepo:      commentRepo,
-		postRepo:         postRepo,
-		teamRepo:         teamRepo,
-		telegramListener: telegramListener,
-		telegramAction:   telegramAction,
-		summarizeURL:     summarizeURL,
-		replyIdeasURL:    replyIdeasURL,
-		subscribers:      make(map[entity.Subscriber]chan *entity.CommentEvent),
+		commentRepo:       commentRepo,
+		postRepo:          postRepo,
+		teamRepo:          teamRepo,
+		telegramListener:  telegramListener,
+		telegramAction:    telegramAction,
+		vkontakteListener: vkontakteListener,
+		summarizeURL:      summarizeURL,
+		replyIdeasURL:     replyIdeasURL,
+		subscribers:       make(map[entity.Subscriber]chan *entity.CommentEvent),
 	}
 }
 
@@ -262,6 +265,7 @@ func (c *Comment) Subscribe(request *entity.Subscriber) (<-chan *entity.CommentE
 		// а Action возвращает удаления комментариев другими модераторами
 		tgListenerCh := c.telegramListener.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
 		tgActionCh := c.telegramAction.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
+		vkListenerCh := c.vkontakteListener.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
 
 		// объединяем каналы
 		for {
@@ -269,22 +273,30 @@ func (c *Comment) Subscribe(request *entity.Subscriber) (<-chan *entity.CommentE
 			case comment, ok := <-tgListenerCh:
 				if !ok {
 					tgListenerCh = nil
-					if tgActionCh == nil {
+					if tgActionCh == nil && vkListenerCh == nil {
 						// оба каналы закрыты
 						return
 					}
 					continue
 				}
 				ch <- comment
-
 			case comment, ok := <-tgActionCh:
 				if !ok {
 					tgActionCh = nil
-					if tgListenerCh == nil {
+					if tgListenerCh == nil && vkListenerCh == nil {
 						// оба канала закрыты
 						return
 					}
 					continue
+				}
+				ch <- comment
+			case comment, ok := <-vkListenerCh:
+				if !ok {
+					vkListenerCh = nil
+					if tgListenerCh == nil && tgActionCh == nil {
+						// оба канала закрыты
+						return
+					}
 				}
 				ch <- comment
 			}

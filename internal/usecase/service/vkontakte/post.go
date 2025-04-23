@@ -32,13 +32,13 @@ func NewPost(
 }
 
 func (p *Post) AddPost(request *entity.PostUnion) (int, error) {
-	// Create post action record
+	// Создаем запись о действии публикации поста
 	actionId, err := p.createPostAction(request)
 	if err != nil {
 		return 0, err
 	}
 
-	// Process the post asynchronously
+	// обрабатываем асинхронно
 	go p.publishPost(request, actionId)
 
 	return actionId, nil
@@ -83,21 +83,20 @@ func (p *Post) updatePostActionStatus(actionId int, status, errMsg string) {
 }
 
 func (p *Post) publishPost(request *entity.PostUnion, actionId int) {
-	// Get VK credentials
+	// Получаем креды от VK
 	groupId, adminApiKey, _, err := p.teamRepo.GetVKCredsByTeamID(request.TeamID)
 	if err != nil {
 		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 
-	// Initialize VK API with admin API key
+	// используем админский токен
 	vk := api.NewVK(adminApiKey)
 
-	// Prepare parameters for wall post
 	params := api.Params{
-		"owner_id":   -groupId, // Negative ID for groups
+		"owner_id":   -groupId, // для групп используются отрицательные ID
 		"message":    request.Text,
-		"from_group": 1, // 1 means post on behalf of the group
+		"from_group": 1, // от имени группы
 	}
 
 	// Handle attachments
@@ -113,7 +112,7 @@ func (p *Post) publishPost(request *entity.PostUnion, actionId int) {
 		}
 	}
 
-	// Post to VK wall
+	// Постим на стену VK группы
 	var response api.WallPostResponse
 	err = retry.Retry(func() error {
 		response, err = vk.WallPost(params)
@@ -125,7 +124,7 @@ func (p *Post) publishPost(request *entity.PostUnion, actionId int) {
 		return
 	}
 
-	// Save post ID to our database
+	// Сохраняем в нашей БД
 	err = retry.Retry(func() error {
 		_, err := p.postRepo.AddPostPlatform(&entity.PostPlatform{
 			PostUnionId: request.ID,
@@ -172,7 +171,6 @@ func (p *Post) uploadAttachments(vk *api.VK, groupId int, attachments []*entity.
 }
 
 func (p *Post) uploadPhoto(vk *api.VK, groupId int, upload *entity.Upload) (string, error) {
-	// Upload photo to VK server
 	uploadResponse, err := vk.UploadGroupWallPhoto(groupId, upload.RawBytes)
 	if err != nil {
 		return "", err
@@ -182,13 +180,12 @@ func (p *Post) uploadPhoto(vk *api.VK, groupId int, upload *entity.Upload) (stri
 		return "", errors.New("no photos uploaded")
 	}
 
-	// Format: photo{owner_id}_{media_id}
+	// Формат: photo{owner_id}_{media_id}
 	photoAttachment := fmt.Sprintf("photo%d_%d", uploadResponse[0].OwnerID, uploadResponse[0].ID)
 	return photoAttachment, nil
 }
 
 func (p *Post) uploadVideo(vk *api.VK, groupId int, upload *entity.Upload) (string, error) {
-	// Загрузить видео на сервер VK
 	videoSaveResponse, err := vk.UploadVideo(api.Params{
 		"group_id": groupId,
 	}, upload.RawBytes)
@@ -196,13 +193,13 @@ func (p *Post) uploadVideo(vk *api.VK, groupId int, upload *entity.Upload) (stri
 		return "", fmt.Errorf("failed to upload video: %w", err)
 	}
 
-	// Форматировать идентификатор видео: video{owner_id}_{video_id}
+	// Формат: video{owner_id}_{video_id}
 	videoAttachment := fmt.Sprintf("video%d_%d", videoSaveResponse.OwnerID, videoSaveResponse.VideoID)
 	return videoAttachment, nil
 }
 
 func (p *Post) EditPost(request *entity.EditPostRequest) (int, error) {
-	// Create post action record for edit operation
+	// Создаем запись о действии редактирования поста
 	var postActionId int
 	err := retry.Retry(func() error {
 		var err error
@@ -219,45 +216,38 @@ func (p *Post) EditPost(request *entity.EditPostRequest) (int, error) {
 		return 0, err
 	}
 
-	// Get post information
 	post, err := p.postRepo.GetPostUnion(request.PostUnionID)
 	if err != nil {
 		p.updatePostActionStatus(postActionId, "error", err.Error())
 		return 0, err
 	}
 
-	// Get VK post information
 	postPlatform, err := p.postRepo.GetPostPlatform(request.PostUnionID, "vk")
 	if err != nil {
 		p.updatePostActionStatus(postActionId, "error", err.Error())
 		return 0, err
 	}
 
-	// Start asynchronous edit operation
 	go p.editPostAsync(post, postActionId, postPlatform.PostId, request.Text)
 
 	return postActionId, nil
 }
 
 func (p *Post) editPostAsync(post *entity.PostUnion, actionId, postId int, newText string) {
-	// Get VK credentials
 	groupId, adminApiKey, _, err := p.teamRepo.GetVKCredsByTeamID(post.TeamID)
 	if err != nil {
 		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 
-	// Initialize VK API with admin API key
 	vk := api.NewVK(adminApiKey)
 
-	// Prepare parameters for editing the post
 	params := api.Params{
-		"owner_id": -groupId, // Negative ID for groups
+		"owner_id": -groupId,
 		"post_id":  postId,
 		"message":  newText,
 	}
 
-	// If post has attachments, we need to maintain them
 	if len(post.Attachments) > 0 {
 		attachmentsStr, err := p.uploadAttachments(vk, groupId, post.Attachments)
 		if err != nil {
@@ -270,7 +260,6 @@ func (p *Post) editPostAsync(post *entity.PostUnion, actionId, postId int, newTe
 		}
 	}
 
-	// Edit the post
 	err = retry.Retry(func() error {
 		_, err := vk.WallEdit(params)
 		return err
@@ -285,7 +274,6 @@ func (p *Post) editPostAsync(post *entity.PostUnion, actionId, postId int, newTe
 }
 
 func (p *Post) DeletePost(request *entity.DeletePostRequest) (int, error) {
-	// Create post action record for delete operation
 	var postActionId int
 	err := retry.Retry(func() error {
 		var err error
@@ -302,41 +290,35 @@ func (p *Post) DeletePost(request *entity.DeletePostRequest) (int, error) {
 		return 0, err
 	}
 
-	// Get post information
 	post, err := p.postRepo.GetPostUnion(request.PostUnionID)
 	if err != nil {
 		p.updatePostActionStatus(postActionId, "error", err.Error())
 		return 0, err
 	}
 
-	// Start asynchronous delete operation
 	go p.deletePostAsync(post, postActionId)
 
 	return postActionId, nil
 }
 
 func (p *Post) deletePostAsync(post *entity.PostUnion, actionId int) {
-	// Get VK post information
 	postPlatform, err := p.postRepo.GetPostPlatform(post.ID, "vk")
 	if err != nil {
 		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 
-	// Get VK credentials
 	groupId, adminApiKey, _, err := p.teamRepo.GetVKCredsByTeamID(post.TeamID)
 	if err != nil {
 		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 
-	// Initialize VK API with admin API key
 	vk := api.NewVK(adminApiKey)
 
-	// Delete the post
 	err = retry.Retry(func() error {
 		_, err := vk.WallDelete(api.Params{
-			"owner_id": -groupId, // Negative ID for groups
+			"owner_id": -groupId,
 			"post_id":  postPlatform.PostId,
 		})
 		return err
@@ -347,7 +329,6 @@ func (p *Post) deletePostAsync(post *entity.PostUnion, actionId int) {
 		return
 	}
 
-	// Remove post from our platform
 	err = retry.Retry(func() error {
 		return p.postRepo.DeletePlatformFromPostUnion(post.ID, "vk")
 	})

@@ -69,6 +69,7 @@ func main() {
 	commentRepo := cockroach.NewComment(DBConn)
 	analyticsRepo := cockroach.NewAnalytics(DBConn)
 	telegramListenerRepo := cockroach.NewTelegramListener(DBConn)
+	vkontakteListenerRepo := cockroach.NewVkontakteListener(DBConn)
 
 	// запускаем сервисы usecase (бизнес-логика)
 	// -- telegram --
@@ -90,6 +91,7 @@ func main() {
 	}
 	// -- vk --
 	vkPostPlatformUseCase := vkontakte.NewPost(postRepo, teamRepo, uploadRepo)
+	vkEventListener := vkontakte.NewVKEventListener(vkontakteListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo)
 
 	postUseCase := service.NewPostUnion(
 		postRepo,
@@ -107,6 +109,7 @@ func main() {
 		teamRepo,
 		telegramEventListener,
 		telegramCommentUseCase,
+		vkEventListener,
 		summarizeURL,
 		replyIdeasURL,
 	)
@@ -196,6 +199,8 @@ func main() {
 	// Запуск слушателя событий Post. Если приходит сигнал завершения, то слушатель останавливается.
 	go telegramEventListener.StartListener()
 	defer telegramEventListener.StopListener()
+	go vkEventListener.StartListener()
+	defer vkEventListener.StopListener()
 
 	<-sysCtx.Done()
 	ctx, cancel := context.WithTimeout(

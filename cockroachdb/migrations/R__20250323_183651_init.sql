@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS channel_vk (
     -- Время последнего обновления канала.
     -- Поле требуется для отслеживания того, какой инстанс микросервиса в данный момент отслеживает канал.
     -- Если инстанс упадёт, то через 5 минут другой инстанс сможет взять на себя управление каналом.
-    last_updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    last_updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()-INTERVAL '5 minutes'
 );
 
 CREATE INDEX IF NOT EXISTS idx_channel_vk_last_updated_timestamp

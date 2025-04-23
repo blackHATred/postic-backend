@@ -17,6 +17,18 @@ func NewTeam(db *sqlx.DB) repo.Team {
 	return &Team{db: db}
 }
 
+func (t *Team) GetTeamIDByVKGroupID(groupId int) (int, error) {
+	var teamId int
+	err := t.db.Get(&teamId, "SELECT team_id FROM channel_vk WHERE group_id = $1", groupId)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, repo.ErrTeamNotFound
+	case err != nil:
+		return 0, err
+	}
+	return teamId, nil
+}
+
 func (t *Team) GetTeamIDByTGDiscussionID(discussionId int) (int, error) {
 	var teamId int
 	err := t.db.Get(&teamId, "SELECT team_id FROM channel_tg WHERE discussion_id = $1", discussionId)
