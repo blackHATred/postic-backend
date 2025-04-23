@@ -39,6 +39,8 @@ type Team interface {
 
 	// PutVKGroup привязывает группу к команде
 	PutVKGroup(teamId int, groupId int, adminApiKey string, groupApiKey string) error
+	// GetVKCredsByTeamID возвращает ID группы и ключи доступа к ней по ID команды
+	GetVKCredsByTeamID(teamId int) (int, string, string, error)
 }
 
 const (

@@ -175,3 +175,22 @@ func (t *Team) PutVKGroup(teamId int, groupId int, adminApiKey string, groupApiK
 	)
 	return err
 }
+
+func (t *Team) GetVKCredsByTeamID(teamId int) (int, string, string, error) {
+	var groupId int
+	var adminApiKey, groupApiKey string
+
+	err := t.db.QueryRow(
+		"SELECT group_id, admin_api_key, group_api_key FROM channel_vk WHERE team_id = $1",
+		teamId,
+	).Scan(&groupId, &adminApiKey, &groupApiKey)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, "", "", repo.ErrTGChannelNotFound
+		}
+		return 0, "", "", err
+	}
+
+	return groupId, adminApiKey, groupApiKey, nil
+}

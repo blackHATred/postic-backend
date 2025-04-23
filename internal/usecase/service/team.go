@@ -235,10 +235,10 @@ func (t *Team) SetVK(request *entity.SetVKRequest) error {
 	vkAdmin := api.NewVK(request.AdminApiKey)
 	userInfo, err := vkAdmin.UsersGet(api.Params{})
 	if err != nil {
-		return errors.New("invalid admin token")
+		return errors.Join(usecase.ErrUserForbidden, errors.New("invalid admin token"))
 	}
 	if len(userInfo) == 0 {
-		return errors.New("invalid admin token")
+		return errors.Join(usecase.ErrUserForbidden, errors.New("invalid admin token"))
 	}
 
 	// Проверяем, что пользователь является администратором указанной группы
@@ -250,7 +250,7 @@ func (t *Team) SetVK(request *entity.SetVKRequest) error {
 		return err
 	}
 	if len(groupInfo.Groups) == 0 || !groupInfo.Groups[0].IsAdmin {
-		return errors.New("user is not an admin of the group")
+		return errors.Join(usecase.ErrUserForbidden, errors.New("user is not an admin of the group"))
 	}
 
 	// Проверяем валидность токена сообщества
@@ -259,10 +259,10 @@ func (t *Team) SetVK(request *entity.SetVKRequest) error {
 		"group_id": request.GroupID,
 	})
 	if err != nil {
-		return errors.New("invalid group token")
+		return errors.Join(usecase.ErrUserForbidden, errors.New("invalid group token"))
 	}
 	if len(groupInfo.Groups) == 0 {
-		return errors.New("invalid group token or group not found")
+		return errors.Join(usecase.ErrUserForbidden, errors.New("invalid group token or group not found"))
 	}
 
 	// Сохраняем данные в репозиторий

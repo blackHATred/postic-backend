@@ -166,7 +166,7 @@ func (c *Comment) GetLastComments(request *entity.GetCommentsRequest) ([]*entity
 
 	// Получаем комментарии из репозитория, используя текущее время как верхнюю границу
 	// для получения самых последних комментариев
-	comments, err := c.commentRepo.GetComments(request.PostUnionID, request.Offset, request.Before, request.Limit, request.MarkedAsTicket)
+	comments, err := c.commentRepo.GetComments(request.TeamID, request.PostUnionID, request.Offset, request.Before, request.Limit, request.MarkedAsTicket)
 	if err != nil {
 		return nil, err
 	}
@@ -328,6 +328,9 @@ func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 	case err != nil:
 		return 0, err
 	}
+	if comment.TeamID != request.TeamID {
+		return 0, usecase.ErrUserForbidden
+	}
 	// делегируем отправку комментария в Telegram
 	if comment.Platform == "tg" {
 		return c.telegramAction.ReplyComment(request)
@@ -352,6 +355,9 @@ func (c *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 	case err != nil:
 		return err
 	}
+	if comment.TeamID != request.TeamID {
+		return usecase.ErrUserForbidden
+	}
 	// делегируем удаление комментария в Telegram
 	if comment.Platform == "tg" {
 		return c.telegramAction.DeleteComment(request)
@@ -375,6 +381,9 @@ func (c *Comment) MarkAsTicket(request *entity.MarkAsTicketRequest) error {
 		return usecase.ErrCommentNotFound
 	case err != nil:
 		return err
+	}
+	if comment.TeamID != request.TeamID {
+		return usecase.ErrUserForbidden
 	}
 	// обновляем комментарий, помечая (или наоборот, убирая) его как тикет
 	comment.MarkedAsTicket = request.MarkedAsTicket

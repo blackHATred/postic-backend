@@ -16,6 +16,7 @@ type PostUnion struct {
 	teamRepo   repo.Team
 	uploadRepo repo.Upload
 	telegram   usecase.PostPlatform
+	vkontakte  usecase.PostPlatform
 }
 
 func NewPostUnion(
@@ -23,12 +24,14 @@ func NewPostUnion(
 	teamRepo repo.Team,
 	uploadRepo repo.Upload,
 	telegram usecase.PostPlatform,
+	vkontakte usecase.PostPlatform,
 ) usecase.PostUnion {
 	p := &PostUnion{
 		postRepo:   postRepo,
 		teamRepo:   teamRepo,
 		uploadRepo: uploadRepo,
 		telegram:   telegram,
+		vkontakte:  vkontakte,
 	}
 	// запускаем горутину для мониторинга запланированных постов
 	go p.scheduleListen()
@@ -65,6 +68,13 @@ func (p *PostUnion) scheduleListen() {
 							_, err = p.telegram.AddPost(postUnion)
 							if err != nil {
 								log.Errorf("error adding post to telegram: %v", err)
+								continue
+							}
+						case "vk":
+							// добавляем пост во вконтакте
+							_, err = p.vkontakte.AddPost(postUnion)
+							if err != nil {
+								log.Errorf("error adding post to vk: %v", err)
 								continue
 							}
 							// другие платформы todo
@@ -146,6 +156,12 @@ func (p *PostUnion) AddPostUnion(request *entity.AddPostRequest) (int, []int, er
 				return postUnionID, actionIDs, err
 			}
 			actionIDs = append(actionIDs, platformID)
+		case "vk":
+			platformID, err := p.vkontakte.AddPost(postUnion)
+			if err != nil {
+				return postUnionID, actionIDs, err
+			}
+			actionIDs = append(actionIDs, platformID)
 			// todo другие платформы
 		}
 	}
@@ -202,6 +218,15 @@ func (p *PostUnion) EditPostUnion(request *entity.EditPostRequest) ([]int, error
 				return nil, err
 			}
 			actionIDs = append(actionIDs, actionID)
+		case "vk":
+			actionID, err := p.vkontakte.EditPost(&entity.EditPostRequest{
+				PostUnionID: request.PostUnionID,
+				Text:        request.Text,
+			})
+			if err != nil {
+				return nil, err
+			}
+			actionIDs = append(actionIDs, actionID)
 			// todo другие платформы
 		}
 	}
@@ -236,6 +261,16 @@ func (p *PostUnion) DeletePostUnion(request *entity.DeletePostRequest) ([]int, e
 		switch platform {
 		case "tg":
 			actionID, err := p.telegram.DeletePost(&entity.DeletePostRequest{
+				UserID:      request.UserID,
+				TeamID:      request.TeamID,
+				PostUnionID: request.PostUnionID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			actionIDs = append(actionIDs, actionID)
+		case "vk":
+			actionID, err := p.vkontakte.DeletePost(&entity.DeletePostRequest{
 				UserID:      request.UserID,
 				TeamID:      request.TeamID,
 				PostUnionID: request.PostUnionID,
@@ -363,6 +398,12 @@ func (p *PostUnion) DoAction(request *entity.DoActionRequest) (int, error) {
 				return 0, err
 			}
 			return actionID, nil
+		case "vk":
+			actionID, err := p.vkontakte.AddPost(postUnion)
+			if err != nil {
+				return 0, err
+			}
+			return actionID, nil
 		}
 	case "delete":
 		switch request.Platform {
@@ -376,11 +417,32 @@ func (p *PostUnion) DoAction(request *entity.DoActionRequest) (int, error) {
 				return 0, err
 			}
 			return actionID, nil
+		case "vk":
+			actionID, err := p.vkontakte.DeletePost(&entity.DeletePostRequest{
+				UserID:      request.UserID,
+				TeamID:      request.TeamID,
+				PostUnionID: request.PostUnionID,
+			})
+			if err != nil {
+				return 0, err
+			}
+			return actionID, nil
 		}
 	case "edit":
 		switch request.Platform {
 		case "tg":
 			actionID, err := p.telegram.EditPost(&entity.EditPostRequest{
+				UserID:      request.UserID,
+				TeamID:      request.TeamID,
+				PostUnionID: request.PostUnionID,
+				Text:        postUnion.Text,
+			})
+			if err != nil {
+				return 0, err
+			}
+			return actionID, nil
+		case "vk":
+			actionID, err := p.vkontakte.EditPost(&entity.EditPostRequest{
 				UserID:      request.UserID,
 				TeamID:      request.TeamID,
 				PostUnionID: request.PostUnionID,

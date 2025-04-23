@@ -232,6 +232,7 @@ func (c *Comment) AddComment(comment *entity.Comment) (int, error) {
 }
 
 func (c *Comment) GetComments(
+	teamID int,
 	postUnionID int,
 	offset time.Time,
 	before bool,
@@ -285,12 +286,13 @@ WITH RECURSIVE top_level_comments AS (
         created_at,
 		marked_as_ticket
     FROM post_comment
-    WHERE ($1 = 0 OR "post_union_id" = $1)
+    WHERE ($1 = 0 OR team_id = $1)
+	  AND ($1 = 0 OR "post_union_id" = $2)
       AND reply_to_comment_id = 0
-      AND created_at %s $2
+      AND created_at %s $3
       %s
     ORDER BY created_at %s
-    LIMIT $3
+    LIMIT $4
 ),
 comment_tree AS (
     SELECT
@@ -352,7 +354,7 @@ FROM comment_tree
 ORDER BY CASE WHEN reply_to_comment_id = 0 THEN 0 ELSE 1 END, created_at DESC
 `, comparator, markedAsTicketCondition, sortOrder)
 
-	rows, err := c.db.Queryx(query, postUnionID, offset, limit)
+	rows, err := c.db.Queryx(query, teamID, postUnionID, offset, limit)
 	if err != nil {
 		return nil, err
 	}

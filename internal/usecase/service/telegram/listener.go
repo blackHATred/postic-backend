@@ -508,10 +508,10 @@ func (t *EventListener) handleComment(update *models.Update) error {
 				update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel.MessageID, "tg")
 
 			if errors.Is(err, repo.ErrPostPlatformNotFound) {
-				// If not a post, try to find it as a comment
+				// Если это не пост, то возможно это ответ на комментарий
 				replyToComment, err = t.commentRepo.GetCommentInfoByPlatformID(update.Message.ReplyToMessage.ID, "tg")
 				if errors.Is(err, repo.ErrCommentNotFound) {
-					// If not found as a comment either, just ignore
+					// Такие случаи игнорим
 					log.Debugf("Reply target not found as post or comment, ignoring")
 				} else if err != nil {
 					log.Errorf("Failed to get comment: %v", err)

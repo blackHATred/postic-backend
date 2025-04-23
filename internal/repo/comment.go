@@ -14,7 +14,7 @@ type Comment interface {
 	// EditComment редактирует комментарий
 	EditComment(comment *entity.Comment) error
 	// GetComments возвращает комментарии к посту
-	GetComments(postUnionID int, offset time.Time, before bool, limit int, markedAsTicket *bool) ([]*entity.Comment, error)
+	GetComments(teamID, postUnionID int, offset time.Time, before bool, limit int, markedAsTicket *bool) ([]*entity.Comment, error)
 	// GetCommentInfo возвращает информацию о комментарии
 	GetCommentInfo(commentID int) (*entity.Comment, error)
 	// GetCommentInfoByPlatformID возвращает информацию о комментарии по ID платформы

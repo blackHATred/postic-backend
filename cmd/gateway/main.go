@@ -15,6 +15,7 @@ import (
 	"postic-backend/internal/repo/cockroach"
 	"postic-backend/internal/usecase/service"
 	"postic-backend/internal/usecase/service/telegram"
+	"postic-backend/internal/usecase/service/vkontakte"
 	"postic-backend/pkg/connector"
 	"strings"
 	"time"
@@ -70,6 +71,7 @@ func main() {
 	telegramListenerRepo := cockroach.NewTelegramListener(DBConn)
 
 	// запускаем сервисы usecase (бизнес-логика)
+	// -- telegram --
 	telegramPostPlatformUseCase, err := telegram.NewTelegramPost(telegramBotToken, postRepo, teamRepo, uploadRepo)
 	if err != nil {
 		log.Fatalf("Ошибка при создании Post UseCase: %v", err)
@@ -86,7 +88,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("Ошибка при создании Telegram Analyze: %v", err)
 	}
-	postUseCase := service.NewPostUnion(postRepo, teamRepo, uploadRepo, telegramPostPlatformUseCase)
+	// -- vk --
+	vkPostPlatformUseCase := vkontakte.NewPost(postRepo, teamRepo, uploadRepo)
+
+	postUseCase := service.NewPostUnion(
+		postRepo,
+		teamRepo,
+		uploadRepo,
+		telegramPostPlatformUseCase,
+		vkPostPlatformUseCase,
+	)
 	userUseCase := service.NewUser(userRepo)
 	uploadUseCase := service.NewUpload(uploadRepo)
 	teamUseCase := service.NewTeam(teamRepo)
