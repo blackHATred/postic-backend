@@ -35,6 +35,13 @@ func (a *Analytics) GetPostPlatformStatsByPostUnionID(postUnionID int, platform 
 		return nil, err
 	}
 
+	// Получаем количество комментариев для поста
+	comments, err := a.CommentsCount(stats.PostUnionID)
+	if err != nil {
+		return nil, err
+	}
+	stats.Comments = comments
+
 	return &stats, nil
 }
 

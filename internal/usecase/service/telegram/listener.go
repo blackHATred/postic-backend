@@ -500,7 +500,7 @@ func (t *EventListener) handleComment(update *models.Update) error {
 	var replyToComment *entity.Comment
 	if update.Message != nil && update.Message.ReplyToMessage != nil {
 		// является ответом на какой-то пост, а не просто сообщением в discussion
-		postTg, err = t.postRepo.GetPostPlatformByPlatformPostID(int(update.Message.ReplyToMessage.ID), "tg")
+		postTg, err = t.postRepo.GetPostPlatformByPlatformPostID(update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel.MessageID, "tg")
 		if errors.Is(err, repo.ErrPostPlatformNotFound) {
 			// если не найден пост, то возможно это ответ на комментарий - в таком случае пытаемся найти его
 			replyToComment, err = t.commentRepo.GetCommentInfoByPlatformID(update.Message.ReplyToMessage.ID, "tg")
