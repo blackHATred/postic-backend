@@ -85,13 +85,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Ошибка при создании слушателя событий Post: %v", err)
 	}
-	telegramAnalytics, err := telegram.NewTelegramAnalyze(telegramBotToken, teamRepo, postRepo, analyticsRepo)
+	telegramAnalytics, err := telegram.NewTelegramAnalytics(telegramBotToken, teamRepo, postRepo, analyticsRepo)
 	if err != nil {
-		log.Fatalf("Ошибка при создании Telegram Analyze: %v", err)
+		log.Fatalf("Ошибка при создании Telegram Analytics: %v", err)
 	}
 	// -- vk --
 	vkPostPlatformUseCase := vkontakte.NewPost(postRepo, teamRepo, uploadRepo)
 	vkEventListener := vkontakte.NewVKEventListener(vkontakteListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo)
+	vkAnalytics := vkontakte.NewVkontakteAnalytics(teamRepo, postRepo, analyticsRepo)
 
 	postUseCase := service.NewPostUnion(
 		postRepo,
@@ -113,7 +114,7 @@ func main() {
 		summarizeURL,
 		replyIdeasURL,
 	)
-	analyticsUseCase := service.NewAnalytics(analyticsRepo, teamRepo, telegramAnalytics)
+	analyticsUseCase := service.NewAnalytics(analyticsRepo, teamRepo, postRepo, telegramAnalytics, vkAnalytics)
 
 	// запускаем сервисы delivery (обработка запросов)
 	cookieManager := utils.NewCookieManager(false)

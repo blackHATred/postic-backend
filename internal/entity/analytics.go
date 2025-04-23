@@ -40,6 +40,7 @@ type PlatformStats struct {
 type PostStats struct {
 	PostUnionID int            `json:"post_union_id"`
 	Telegram    *PlatformStats `json:"telegram,omitempty"`
+	Vkontakte   *PlatformStats `json:"vkontakte,omitempty"`
 	// todo: другие платформы
 }
 

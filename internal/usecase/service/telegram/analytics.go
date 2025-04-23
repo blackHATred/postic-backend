@@ -10,14 +10,14 @@ import (
 	"time"
 )
 
-type Analyze struct {
+type Analytics struct {
 	bot           *bot.Bot
 	teamRepo      repo.Team
 	postRepo      repo.Post
 	analyticsRepo repo.Analytics
 }
 
-func NewTelegramAnalyze(
+func NewTelegramAnalytics(
 	token string,
 	teamRepo repo.Team,
 	postRepo repo.Post,
@@ -27,7 +27,7 @@ func NewTelegramAnalyze(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create telegram telegramBot: %w", err)
 	}
-	return &Analyze{
+	return &Analytics{
 		bot:           telegramBot,
 		teamRepo:      teamRepo,
 		postRepo:      postRepo,
@@ -35,7 +35,7 @@ func NewTelegramAnalyze(
 	}, nil
 }
 
-func (a *Analyze) UpdateStat(postUnionID int) (*entity.PlatformStats, error) {
+func (a *Analytics) UpdateStat(postUnionID int) (*entity.PlatformStats, error) {
 	// Получаем пост по ID
 	post, err := a.postRepo.GetPostUnion(postUnionID)
 	if err != nil {
