@@ -41,7 +41,8 @@ type SetVKRequest struct {
 	RequestUserID int    `json:"-" db:"user_id"`
 	TeamID        int    `json:"team_id" db:"team_id"`
 	GroupID       int    `json:"group_id" db:"group_id"`
-	ApiKey        string `json:"api_key" db:"api_key"`
+	AdminApiKey   string `json:"admin_api_key" db:"admin_api_key"`
+	GroupApiKey   string `json:"group_api_key" db:"group_api_key"`
 }
 
 type RenameTeamRequest struct {

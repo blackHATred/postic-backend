@@ -5,15 +5,15 @@ import (
 	"postic-backend/internal/repo"
 )
 
-type Listener struct {
+type TelegramListener struct {
 	db *sqlx.DB
 }
 
 func NewTelegramListener(db *sqlx.DB) repo.TelegramListener {
-	return &Listener{db: db}
+	return &TelegramListener{db: db}
 }
 
-func (l *Listener) GetLastUpdate() (int, error) {
+func (l *TelegramListener) GetLastUpdate() (int, error) {
 	// Пример запроса к базе данных для получения последнего обновления
 	var lastUpdate int
 	err := l.db.QueryRow("SELECT last_update_id FROM tg_bot_state WHERE id = 1").Scan(&lastUpdate)
@@ -23,7 +23,7 @@ func (l *Listener) GetLastUpdate() (int, error) {
 	return lastUpdate, nil
 }
 
-func (l *Listener) SetLastUpdate(i int) error {
+func (l *TelegramListener) SetLastUpdate(i int) error {
 	// Пример запроса к базе данных для установки последнего обновления
 	_, err := l.db.Exec("UPDATE tg_bot_state SET last_update_id = $1 WHERE id = 1", i)
 	if err != nil {

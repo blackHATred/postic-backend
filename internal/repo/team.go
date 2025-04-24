@@ -20,6 +20,7 @@ type Team interface {
 	GetTeamIDByPostUnionID(postUnionID int) (int, error)
 	// GetTeamIDByTGDiscussionID возвращает ID команды по ID обсуждения
 	GetTeamIDByTGDiscussionID(discussionId int) (int, error)
+	GetTeamIDByVKGroupID(groupId int) (int, error)
 
 	// GetUserTeams возвращает список айди команд пользователя
 	GetUserTeams(userID int) ([]int, error)
@@ -36,6 +37,11 @@ type Team interface {
 	PutTGChannel(teamId int, channelId int, discussionId int) error
 	// GetTGChannelByDiscussionId возвращает ID телеграм канала (в нашей системе, а не реальный) по ID обсуждения
 	GetTGChannelByDiscussionId(discussionId int) (int, error)
+
+	// PutVKGroup привязывает группу к команде
+	PutVKGroup(teamId int, groupId int, adminApiKey string, groupApiKey string) error
+	// GetVKCredsByTeamID возвращает ID группы и ключи доступа к ней по ID команды
+	GetVKCredsByTeamID(teamId int) (int, string, string, error)
 }
 
 const (

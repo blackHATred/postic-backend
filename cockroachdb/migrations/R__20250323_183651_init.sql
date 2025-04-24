@@ -27,11 +27,12 @@ CREATE TABLE IF NOT EXISTS channel_vk (
     team_id INT NOT NULL UNIQUE,
     FOREIGN KEY (team_id) REFERENCES team (id) ON DELETE CASCADE,
     group_id INT NOT NULL,
-    api_key STRING(256) NOT NULL,
+    admin_api_key STRING(256) NOT NULL,
+    group_api_key STRING(256) NOT NULL,
     -- Время последнего обновления канала.
     -- Поле требуется для отслеживания того, какой инстанс микросервиса в данный момент отслеживает канал.
     -- Если инстанс упадёт, то через 5 минут другой инстанс сможет взять на себя управление каналом.
-    last_updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    last_updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()-INTERVAL '5 minutes'
 );
 
 CREATE INDEX IF NOT EXISTS idx_channel_vk_last_updated_timestamp
@@ -119,6 +120,14 @@ CREATE TABLE IF NOT EXISTS post_platform (
     post_id INT NOT NULL
 );
 
+-- У telegram есть такая особенность, что группа медиавложений считается как несколько разных сообщений.
+-- Чтобы отслеживать взаимосвязанные вложения, создадим отдельную таблицу.
+CREATE TABLE IF NOT EXISTS tg_post_platform_group (
+    tg_post_id INT NOT NULL PRIMARY KEY,
+    post_platform_id INT NOT NULL,
+    FOREIGN KEY (post_platform_id) REFERENCES post_platform (id) ON DELETE CASCADE
+);
+
 -- Состояние бота в Telegram
 CREATE TABLE IF NOT EXISTS tg_bot_state (
     id INT PRIMARY KEY DEFAULT 1,
@@ -146,7 +155,19 @@ CREATE TABLE IF NOT EXISTS post_comment (
     text STRING(4096), -- может быть NULL только в том случае, если есть аттачи
     reply_to_comment_id INT DEFAULT NULL, -- NULL, если комментарий не является ответом на другой комментарий
     is_team_reply BOOL NOT NULL DEFAULT FALSE, -- TRUE, если комментарий оставлен от имени команды в ответ на комментарий пользователя
+    marked_as_ticket BOOL NOT NULL DEFAULT FALSE, -- TRUE, если комментарий помечен как тикет
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Индекс на post_union_id
+CREATE INDEX IF NOT EXISTS idx_post_comment_post_union_id ON post_comment (post_union_id);
+
+-- У telegram есть такая особенность, что группа медиавложений считается как несколько разных сообщений.
+-- Чтобы отслеживать взаимосвязанные вложения, создадим отдельную таблицу.
+CREATE TABLE IF NOT EXISTS tg_post_comment_group (
+    tg_comment_id INT NOT NULL PRIMARY KEY,
+    post_comment_id INT NOT NULL,
+    FOREIGN KEY (post_comment_id) REFERENCES post_comment (id) ON DELETE CASCADE
 );
 
 -- Attachments к комментарию

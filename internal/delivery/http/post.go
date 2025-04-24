@@ -27,6 +27,7 @@ func (p *Post) Configure(server *echo.Group) {
 	server.POST("/add", p.AddPost)
 	server.POST("/edit", p.EditPost)
 	server.DELETE("/delete", p.DeletePost)
+	server.POST("/action", p.DoAction)
 	server.GET("/get", p.GetPost)
 	server.GET("/list", p.GetPosts)
 	server.GET("/status", p.GetPostStatus)
@@ -138,6 +139,41 @@ func (p *Post) DeletePost(c echo.Context) error {
 	return c.JSON(http.StatusOK, echo.Map{
 		"status":    "ok",
 		"actionIDs": actionIDs,
+	})
+}
+
+func (p *Post) DoAction(c echo.Context) error {
+	userID, err := p.authManager.CheckAuthFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	}
+
+	request := &entity.DoActionRequest{}
+	err = utils.ReadJSON(c, request)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат запроса",
+		})
+	}
+	request.UserID = userID
+	actionID, err := p.postUseCase.DoAction(request)
+	switch {
+	case errors.Is(err, usecase.ErrUserForbidden):
+		return c.JSON(http.StatusForbidden, echo.Map{
+			"error": "У вас нет прав на выполнение действий в этой команде",
+		})
+	case err != nil:
+		c.Logger().Errorf("error doing action: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, echo.Map{
+		"status":   "ok",
+		"actionID": actionID,
 	})
 }
 

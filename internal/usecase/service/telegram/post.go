@@ -10,14 +10,14 @@ import (
 	"time"
 )
 
-type Telegram struct {
+type Post struct {
 	bot        *tgbotapi.BotAPI
 	postRepo   repo.Post
 	teamRepo   repo.Team
 	uploadRepo repo.Upload
 }
 
-func NewTelegram(
+func NewTelegramPost(
 	token string,
 	postRepo repo.Post,
 	teamRepo repo.Team,
@@ -27,7 +27,7 @@ func NewTelegram(
 	if err != nil {
 		return nil, err
 	}
-	return &Telegram{
+	return &Post{
 		bot:        bot,
 		postRepo:   postRepo,
 		teamRepo:   teamRepo,
@@ -35,11 +35,11 @@ func NewTelegram(
 	}, nil
 }
 
-func (t *Telegram) createPostAction(request *entity.PostUnion) (int, error) {
+func (p *Post) createPostAction(request *entity.PostUnion) (int, error) {
 	var postActionId int
 	err := retry.Retry(func() error {
 		var err error
-		postActionId, err = t.postRepo.AddPostAction(&entity.PostAction{
+		postActionId, err = p.postRepo.AddPostAction(&entity.PostAction{
 			PostUnionID: request.ID,
 			Operation:   "publish",
 			Platform:    "tg",
@@ -51,16 +51,16 @@ func (t *Telegram) createPostAction(request *entity.PostUnion) (int, error) {
 	return postActionId, err
 }
 
-func (t *Telegram) updatePostActionStatus(actionId int, status, errMsg string) {
+func (p *Post) updatePostActionStatus(actionId int, status, errMsg string) {
 	// Иногда могут возникать ошибки, но они не должны прерывать выполнение ввиду асинхронности бизнес-логики.
 	// Поэтому экспоненциально делаем ретраи и логируем ошибки
 	err := retry.Retry(func() error {
-		action, err := t.postRepo.GetPostAction(actionId)
+		action, err := p.postRepo.GetPostAction(actionId)
 		if err != nil {
 			log.Errorf("error getting post action: %v", err)
 			return err
 		}
-		return t.postRepo.EditPostAction(&entity.PostAction{
+		return p.postRepo.EditPostAction(&entity.PostAction{
 			ID:          actionId,
 			PostUnionID: action.PostUnionID,
 			Operation:   action.Operation,
@@ -75,53 +75,53 @@ func (t *Telegram) updatePostActionStatus(actionId int, status, errMsg string) {
 	}
 }
 
-func (t *Telegram) publishPost(request *entity.PostUnion, actionId int) {
+func (p *Post) publishPost(request *entity.PostUnion, actionId int) {
 	var tgChannelId int
 	var err error
 	// получаем id канала
 	err = retry.Retry(func() error {
-		tgChannelId, _, err = t.teamRepo.GetTGChannelByTeamID(request.TeamID)
+		tgChannelId, _, err = p.teamRepo.GetTGChannelByTeamID(request.TeamID)
 		if err != nil {
 			return err
 		}
 		return nil
 	})
 	if err != nil {
-		t.updatePostActionStatus(actionId, "error", err.Error())
+		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 	if tgChannelId == 0 {
-		t.updatePostActionStatus(actionId, "error", "channel not found")
+		p.updatePostActionStatus(actionId, "error", "channel not found")
 		return
 	}
 
 	if len(request.Attachments) == 0 {
-		t.handleNoAttachments(request, actionId, tgChannelId)
+		p.handleNoAttachments(request, actionId, tgChannelId)
 	} else if len(request.Attachments) == 1 {
-		t.handleSingleAttachment(request, actionId, tgChannelId)
+		p.handleSingleAttachment(request, actionId, tgChannelId)
 	} else if len(request.Attachments) > 1 && len(request.Attachments) < 11 {
-		t.handleMultipleAttachments(request, actionId, tgChannelId)
+		p.handleMultipleAttachments(request, actionId, tgChannelId)
 	} else {
-		t.updatePostActionStatus(actionId, "error", "too many attachments")
+		p.updatePostActionStatus(actionId, "error", "too many attachments")
 		return
 	}
 }
 
-func (t *Telegram) handleNoAttachments(request *entity.PostUnion, actionId, tgChannelId int) {
+func (p *Post) handleNoAttachments(request *entity.PostUnion, actionId, tgChannelId int) {
 	if request.Text == "" {
-		t.updatePostActionStatus(actionId, "error", "empty post")
+		p.updatePostActionStatus(actionId, "error", "empty post")
 		return
 	}
 
 	newMsg := tgbotapi.NewMessage(int64(tgChannelId), request.Text)
-	msg, err := t.bot.Send(newMsg)
+	msg, err := p.bot.Send(newMsg)
 	if err != nil {
-		t.updatePostActionStatus(actionId, "error", err.Error())
+		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 
 	err = retry.Retry(func() error {
-		_, err := t.postRepo.AddPostPlatform(&entity.PostPlatform{
+		_, err := p.postRepo.AddPostPlatform(&entity.PostPlatform{
 			PostUnionId: request.ID,
 			PostId:      msg.MessageID,
 			Platform:    "tg",
@@ -132,31 +132,31 @@ func (t *Telegram) handleNoAttachments(request *entity.PostUnion, actionId, tgCh
 		log.Errorf("error while adding post platform: %v", err)
 	}
 
-	t.updatePostActionStatus(actionId, "success", "")
+	p.updatePostActionStatus(actionId, "success", "")
 }
 
-func (t *Telegram) handleSingleAttachment(request *entity.PostUnion, actionId, tgChannelId int) {
+func (p *Post) handleSingleAttachment(request *entity.PostUnion, actionId, tgChannelId int) {
 	attachment := request.Attachments[0]
-	upload, err := t.uploadRepo.GetUpload(attachment.ID)
+	upload, err := p.uploadRepo.GetUpload(attachment.ID)
 	if err != nil {
-		t.updatePostActionStatus(actionId, "error", err.Error())
+		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 
 	switch attachment.FileType {
 	case "photo":
-		t.sendPhoto(request, actionId, tgChannelId, upload)
+		p.sendPhoto(request, actionId, tgChannelId, upload)
 	case "video":
-		t.sendVideo(request, actionId, tgChannelId, upload)
+		p.sendVideo(request, actionId, tgChannelId, upload)
 	}
 }
 
-func (t *Telegram) handleMultipleAttachments(request *entity.PostUnion, actionId, tgChannelId int) {
+func (p *Post) handleMultipleAttachments(request *entity.PostUnion, actionId, tgChannelId int) {
 	var mediaGroup []any
 	for i, attachment := range request.Attachments {
-		upload, err := t.uploadRepo.GetUpload(attachment.ID)
+		upload, err := p.uploadRepo.GetUpload(attachment.ID)
 		if err != nil {
-			t.updatePostActionStatus(actionId, "error", err.Error())
+			p.updatePostActionStatus(actionId, "error", err.Error())
 			return
 		}
 
@@ -189,20 +189,28 @@ func (t *Telegram) handleMultipleAttachments(request *entity.PostUnion, actionId
 		var messages []tgbotapi.Message
 		err := retry.Retry(func() error {
 			var err error
-			messages, err = t.bot.SendMediaGroup(mediaGroupMsg)
+			messages, err = p.bot.SendMediaGroup(mediaGroupMsg)
 			return err
 		})
 		if err != nil {
-			t.updatePostActionStatus(actionId, "error", err.Error())
+			p.updatePostActionStatus(actionId, "error", err.Error())
 			return
 		}
 
 		if len(messages) > 0 {
+			tgMediaGroupMessages := make([]entity.TgPostPlatformGroup, len(messages)-1)
+			for i, msg := range messages[1:] {
+				tgMediaGroupMessages[i] = entity.TgPostPlatformGroup{
+					PostPlatformID: messages[0].MessageID,
+					TgPostID:       msg.MessageID,
+				}
+			}
 			err := retry.Retry(func() error {
-				_, err := t.postRepo.AddPostPlatform(&entity.PostPlatform{
-					PostUnionId: request.ID,
-					PostId:      messages[0].MessageID,
-					Platform:    "tg",
+				_, err := p.postRepo.AddPostPlatform(&entity.PostPlatform{
+					PostUnionId:         request.ID,
+					PostId:              messages[0].MessageID,
+					Platform:            "tg",
+					TgPostPlatformGroup: tgMediaGroupMessages,
 				})
 				return err
 			})
@@ -212,23 +220,23 @@ func (t *Telegram) handleMultipleAttachments(request *entity.PostUnion, actionId
 		}
 	}
 
-	t.updatePostActionStatus(actionId, "success", "")
+	p.updatePostActionStatus(actionId, "success", "")
 }
 
-func (t *Telegram) sendPhoto(request *entity.PostUnion, actionId, tgChannelId int, upload *entity.Upload) {
+func (p *Post) sendPhoto(request *entity.PostUnion, actionId, tgChannelId int, upload *entity.Upload) {
 	req := tgbotapi.NewPhoto(int64(tgChannelId), tgbotapi.FileReader{
 		Name:   upload.FilePath,
 		Reader: upload.RawBytes,
 	})
 	req.Caption = request.Text
-	msg, err := t.bot.Send(req)
+	msg, err := p.bot.Send(req)
 	if err != nil {
-		t.updatePostActionStatus(actionId, "error", err.Error())
+		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 
 	err = retry.Retry(func() error {
-		_, err := t.postRepo.AddPostPlatform(&entity.PostPlatform{
+		_, err := p.postRepo.AddPostPlatform(&entity.PostPlatform{
 			PostUnionId: request.ID,
 			PostId:      msg.MessageID,
 			Platform:    "tg",
@@ -239,24 +247,24 @@ func (t *Telegram) sendPhoto(request *entity.PostUnion, actionId, tgChannelId in
 		log.Errorf("error while adding post platform: %v", err)
 	}
 
-	t.updatePostActionStatus(actionId, "success", "")
+	p.updatePostActionStatus(actionId, "success", "")
 }
 
-func (t *Telegram) sendVideo(request *entity.PostUnion, actionId, tgChannelId int, upload *entity.Upload) {
+func (p *Post) sendVideo(request *entity.PostUnion, actionId, tgChannelId int, upload *entity.Upload) {
 	req := tgbotapi.NewVideo(int64(tgChannelId), tgbotapi.FileReader{
 		Name:   upload.FilePath,
 		Reader: upload.RawBytes,
 	})
 	req.Caption = request.Text
-	msg, err := t.bot.Send(req)
+	msg, err := p.bot.Send(req)
 	if err != nil {
 		log.Errorf("error while adding post video: %v", err)
-		t.updatePostActionStatus(actionId, "error", err.Error())
+		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 
 	err = retry.Retry(func() error {
-		_, err := t.postRepo.AddPostPlatform(&entity.PostPlatform{
+		_, err := p.postRepo.AddPostPlatform(&entity.PostPlatform{
 			PostUnionId: request.ID,
 			PostId:      msg.MessageID,
 			Platform:    "tg",
@@ -267,25 +275,25 @@ func (t *Telegram) sendVideo(request *entity.PostUnion, actionId, tgChannelId in
 		log.Errorf("error while adding post platform: %v", err)
 	}
 
-	t.updatePostActionStatus(actionId, "success", "")
+	p.updatePostActionStatus(actionId, "success", "")
 }
 
-func (t *Telegram) AddPost(request *entity.PostUnion) (int, error) {
-	actionId, err := t.createPostAction(request)
+func (p *Post) AddPost(request *entity.PostUnion) (int, error) {
+	actionId, err := p.createPostAction(request)
 	if err != nil {
 		return 0, err
 	}
 
-	go t.publishPost(request, actionId)
+	go p.publishPost(request, actionId)
 
 	return actionId, nil
 }
 
-func (t *Telegram) EditPost(request *entity.EditPostRequest) (int, error) {
+func (p *Post) EditPost(request *entity.EditPostRequest) (int, error) {
 	var postActionId int
 	err := retry.Retry(func() error {
 		var err error
-		postActionId, err = t.postRepo.AddPostAction(&entity.PostAction{
+		postActionId, err = p.postRepo.AddPostAction(&entity.PostAction{
 			PostUnionID: request.PostUnionID,
 			Operation:   "edit",
 			Platform:    "tg",
@@ -298,65 +306,65 @@ func (t *Telegram) EditPost(request *entity.EditPostRequest) (int, error) {
 		return 0, err
 	}
 
-	post, err := t.postRepo.GetPostUnion(request.PostUnionID)
+	post, err := p.postRepo.GetPostUnion(request.PostUnionID)
 	if err != nil {
-		t.updatePostActionStatus(postActionId, "error", err.Error())
+		p.updatePostActionStatus(postActionId, "error", err.Error())
 		return 0, err
 	}
 
 	var tgChannelId int
 	err = retry.Retry(func() error {
 		var err error
-		tgChannelId, _, err = t.teamRepo.GetTGChannelByTeamID(post.TeamID)
+		tgChannelId, _, err = p.teamRepo.GetTGChannelByTeamID(post.TeamID)
 		if err != nil {
 			return err
 		}
 		return nil
 	})
 	if err != nil {
-		t.updatePostActionStatus(postActionId, "error", err.Error())
+		p.updatePostActionStatus(postActionId, "error", err.Error())
 		return 0, err
 	}
 
-	postPlatform, err := t.postRepo.GetPostPlatform(request.PostUnionID, "tg")
+	postPlatform, err := p.postRepo.GetPostPlatform(request.PostUnionID, "tg")
 	if err != nil {
-		t.updatePostActionStatus(postActionId, "error", err.Error())
+		p.updatePostActionStatus(postActionId, "error", err.Error())
 		return 0, err
 	}
 
 	// Start asynchronous edit operation
-	go t.editPostAsync(post, postActionId, tgChannelId, postPlatform.PostId, request.Text)
+	go p.editPostAsync(post, postActionId, tgChannelId, postPlatform.PostId, request.Text)
 
 	return postActionId, nil
 }
 
-func (t *Telegram) editPostAsync(post *entity.PostUnion, actionId, tgChannelId, messageId int, newText string) {
+func (p *Post) editPostAsync(post *entity.PostUnion, actionId, tgChannelId, messageId int, newText string) {
 	// Если нет вложений, то просто обновляем текст
 	if len(post.Attachments) == 0 {
 		msg := tgbotapi.NewEditMessageText(int64(tgChannelId), messageId, newText)
-		_, err := t.bot.Send(msg)
+		_, err := p.bot.Send(msg)
 		if err != nil {
-			t.updatePostActionStatus(actionId, "error", err.Error())
+			p.updatePostActionStatus(actionId, "error", err.Error())
 			return
 		}
 	} else {
 		// Для постов с аттачами редактируем описание первого аттача
 		editMsg := tgbotapi.NewEditMessageCaption(int64(tgChannelId), messageId, newText)
-		_, err := t.bot.Send(editMsg)
+		_, err := p.bot.Send(editMsg)
 		if err != nil {
-			t.updatePostActionStatus(actionId, "error", err.Error())
+			p.updatePostActionStatus(actionId, "error", err.Error())
 			return
 		}
 	}
 
-	t.updatePostActionStatus(actionId, "success", "")
+	p.updatePostActionStatus(actionId, "success", "")
 }
 
-func (t *Telegram) DeletePost(request *entity.DeletePostRequest) (int, error) {
+func (p *Post) DeletePost(request *entity.DeletePostRequest) (int, error) {
 	var postActionId int
 	err := retry.Retry(func() error {
 		var err error
-		postActionId, err = t.postRepo.AddPostAction(&entity.PostAction{
+		postActionId, err = p.postRepo.AddPostAction(&entity.PostAction{
 			PostUnionID: request.PostUnionID,
 			Operation:   "delete",
 			Platform:    "tg",
@@ -369,50 +377,63 @@ func (t *Telegram) DeletePost(request *entity.DeletePostRequest) (int, error) {
 		return 0, err
 	}
 
-	post, err := t.postRepo.GetPostUnion(request.PostUnionID)
+	post, err := p.postRepo.GetPostUnion(request.PostUnionID)
 	if err != nil {
-		t.updatePostActionStatus(postActionId, "error", err.Error())
+		p.updatePostActionStatus(postActionId, "error", err.Error())
 		return 0, err
 	}
 
 	var tgChannelId int
 	err = retry.Retry(func() error {
 		var err error
-		tgChannelId, _, err = t.teamRepo.GetTGChannelByTeamID(post.TeamID)
+		tgChannelId, _, err = p.teamRepo.GetTGChannelByTeamID(post.TeamID)
 		if err != nil {
 			return err
 		}
 		return nil
 	})
 	if err != nil {
-		t.updatePostActionStatus(postActionId, "error", err.Error())
+		p.updatePostActionStatus(postActionId, "error", err.Error())
 		return 0, err
 	}
 
-	go t.deletePostAsync(post, postActionId, tgChannelId)
+	go p.deletePostAsync(post, postActionId, tgChannelId)
 
 	return postActionId, nil
 }
 
-func (t *Telegram) deletePostAsync(post *entity.PostUnion, actionId, tgChannelId int) {
+func (p *Post) deletePostAsync(post *entity.PostUnion, actionId, tgChannelId int) {
 	// Получаем ID поста в телеграме
-	postPlatform, err := t.postRepo.GetPostPlatform(post.ID, "tg")
+	postPlatform, err := p.postRepo.GetPostPlatform(post.ID, "tg")
 	if err != nil {
-		t.updatePostActionStatus(actionId, "error", err.Error())
+		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 
+	if postPlatform.TgPostPlatformGroup != nil && len(postPlatform.TgPostPlatformGroup) > 0 {
+		// сначала удаляем все связанные в медиагруппе сообщения
+		for _, tgPost := range postPlatform.TgPostPlatformGroup {
+			msg := tgbotapi.NewDeleteMessage(int64(tgPost.TgPostID), tgPost.PostPlatformID)
+			_, err = p.bot.Send(msg)
+			if err != nil {
+				p.updatePostActionStatus(actionId, "error", err.Error())
+				return
+			}
+		}
+	}
 	msg := tgbotapi.NewDeleteMessage(int64(tgChannelId), postPlatform.PostId)
-	_, err = t.bot.Send(msg)
+	_, err = p.bot.Send(msg)
 	if err != nil {
-		t.updatePostActionStatus(actionId, "error", err.Error())
+		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 
-	t.updatePostActionStatus(actionId, "success", "")
-}
+	err = retry.Retry(func() error {
+		return p.postRepo.DeletePlatformFromPostUnion(post.ID, "tg")
+	})
+	if err != nil {
+		log.Errorf("error while deleting post platform: %v", err)
+	}
 
-func (t *Telegram) DoAction(request *entity.DoActionRequest) ([]int, error) {
-	//TODO implement me
-	panic("implement me")
+	p.updatePostActionStatus(actionId, "success", "")
 }

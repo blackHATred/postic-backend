@@ -15,6 +15,9 @@ type Post interface {
 	AddPostUnion(*entity.PostUnion) (int, error)
 	// EditPostUnion редактирует агрегированный пост
 	EditPostUnion(*entity.PostUnion) error
+	// DeletePlatformFromPostUnion удаляет платформу из PostUnion. Если не остается ни одного platform,
+	// то удаляет PostUnion
+	DeletePlatformFromPostUnion(postUnionID int, platform string) error
 
 	// GetScheduledPosts возвращает список запланированных постов по статусу и оффсету времени (ДО указанного момента)
 	GetScheduledPosts(status string, offset time.Time, before bool, limit int) ([]*entity.ScheduledPost, error)

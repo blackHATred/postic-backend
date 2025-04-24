@@ -35,12 +35,12 @@ func (c *Comment) EditComment(comment *entity.Comment) error {
 	}
 
 	_, err = tx.Exec(`
-  UPDATE post_comment
-  SET team_id = $1, platform = $2, post_platform_id = $3, user_platform_id = $4, comment_platform_id = $5,
-      full_name = $6, username = $7, avatar_mediafile_id = $8, text = $9,
-      reply_to_comment_id = $10, is_team_reply = $11, created_at = $12
-  WHERE id = $13
- `,
+        UPDATE post_comment
+        SET team_id = $1, platform = $2, post_platform_id = $3, user_platform_id = $4, comment_platform_id = $5,
+            full_name = $6, username = $7, avatar_mediafile_id = $8, text = $9,
+            reply_to_comment_id = $10, is_team_reply = $11, created_at = $12, marked_as_ticket = $13
+        WHERE id = $14
+    `,
 		comment.TeamID,
 		comment.Platform,
 		comment.PostPlatformID,
@@ -53,6 +53,7 @@ func (c *Comment) EditComment(comment *entity.Comment) error {
 		comment.ReplyToCommentID,
 		comment.IsTeamReply,
 		comment.CreatedAt,
+		comment.MarkedAsTicket,
 		comment.ID,
 	)
 	if err != nil {
@@ -68,11 +69,12 @@ func (c *Comment) EditComment(comment *entity.Comment) error {
 
 func (c *Comment) GetCommentInfoByPlatformID(platformID int, platform string) (*entity.Comment, error) {
 	row := c.db.QueryRowx(`
-  SELECT id, team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
-         full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
-  FROM post_comment
-  WHERE comment_platform_id = $1 AND platform = $2
-`, platformID, platform)
+        SELECT id, team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
+               full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at,
+               marked_as_ticket
+        FROM post_comment
+        WHERE comment_platform_id = $1 AND platform = $2
+    `, platformID, platform)
 
 	var comment entity.Comment
 	var avatarMediafileID *int
@@ -92,6 +94,7 @@ func (c *Comment) GetCommentInfoByPlatformID(platformID int, platform string) (*
 		&comment.ReplyToCommentID,
 		&comment.IsTeamReply,
 		&comment.CreatedAt,
+		&comment.MarkedAsTicket,
 	)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -102,10 +105,10 @@ func (c *Comment) GetCommentInfoByPlatformID(platformID int, platform string) (*
 
 	if avatarMediafileID != nil {
 		avatarRow := c.db.QueryRowx(`
-   SELECT id, file_path, file_type, uploaded_by_user_id, created_at
-   FROM mediafile
-   WHERE id = $1
-`, *avatarMediafileID)
+		   SELECT id, file_path, file_type, uploaded_by_user_id, created_at
+		   FROM mediafile
+		   WHERE id = $1
+		`, *avatarMediafileID)
 
 		comment.AvatarMediaFile = &entity.Upload{}
 		if err := avatarRow.StructScan(comment.AvatarMediaFile); err != nil {
@@ -177,17 +180,17 @@ func (c *Comment) AddComment(comment *entity.Comment) (int, error) {
 	var commentID int
 	var avatarMediafileID *int
 
-	// Получаем ID аватара, если он есть
 	if comment.AvatarMediaFile != nil {
 		avatarMediafileID = &comment.AvatarMediaFile.ID
 	}
 
 	row := tx.QueryRow(`
-   INSERT INTO post_comment (team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
-                             full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-   RETURNING id
-`,
+        INSERT INTO post_comment (team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
+                                full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at,
+                                marked_as_ticket)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        RETURNING id
+    `,
 		comment.TeamID,
 		comment.PostUnionID,
 		comment.Platform,
@@ -201,6 +204,7 @@ func (c *Comment) AddComment(comment *entity.Comment) (int, error) {
 		comment.ReplyToCommentID,
 		comment.IsTeamReply,
 		comment.CreatedAt,
+		comment.MarkedAsTicket,
 	)
 	err = row.Scan(&commentID)
 	if err != nil {
@@ -211,9 +215,9 @@ func (c *Comment) AddComment(comment *entity.Comment) (int, error) {
 	if len(comment.Attachments) > 0 {
 		for _, attachment := range comment.Attachments {
 			_, err := tx.Exec(`
-    INSERT INTO post_comment_attachment (comment_id, mediafile_id)
-    VALUES ($1, $2)
-`, commentID, attachment.ID)
+				INSERT INTO post_comment_attachment (comment_id, mediafile_id)
+				VALUES ($1, $2)
+			`, commentID, attachment.ID)
 			if err != nil {
 				return 0, err
 			}
@@ -227,9 +231,17 @@ func (c *Comment) AddComment(comment *entity.Comment) (int, error) {
 	return commentID, nil
 }
 
-func (c *Comment) GetComments(postUnionID int, offset time.Time, before bool, limit int) ([]*entity.Comment, error) {
+func (c *Comment) GetComments(
+	teamID int,
+	postUnionID int,
+	offset time.Time,
+	before bool,
+	limit int,
+	markedAsTicket *bool,
+) ([]*entity.Comment, error) {
 	var comparator string
 	var sortOrder string
+	markedAsTicketCondition := ""
 
 	if before {
 		// Получить комментарии ДО offset
@@ -240,25 +252,109 @@ func (c *Comment) GetComments(postUnionID int, offset time.Time, before bool, li
 		comparator = ">"
 		sortOrder = "ASC" // Сначала более старые
 	}
+	if markedAsTicket != nil {
+		if *markedAsTicket {
+			markedAsTicketCondition = "AND marked_as_ticket = true"
+		} else {
+			markedAsTicketCondition = "AND marked_as_ticket = false"
+		}
+	}
 
+	/*
+		Этот запрос:
+		Сначала выбирает только корневые комментарии (без ответов) с применением LIMIT
+		Затем рекурсивно добавляет все ответы на эти комментарии любого уровня вложенности
+		Сохраняет исходную логику сортировки, располагая родительские комментарии перед ответами
+	*/
 	query := fmt.Sprintf(
 		`
-WITH all_comments AS (
- SELECT id, team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
-     full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
- FROM post_comment
- WHERE ($1 = 0 OR post_union_id = $1)
- AND created_at %s $2
- ORDER BY created_at %s
- LIMIT $3
+WITH RECURSIVE top_level_comments AS (
+    SELECT
+        id,
+        team_id,
+        "post_union_id",
+        platform,
+        post_platform_id,
+        user_platform_id,
+        comment_platform_id,
+        full_name,
+        username,
+        avatar_mediafile_id,
+        text,
+        reply_to_comment_id,
+        is_team_reply,
+        created_at,
+		marked_as_ticket
+    FROM post_comment
+    WHERE ($1 = 0 OR team_id = $1)
+	  AND ($1 = 0 OR "post_union_id" = $2)
+      AND reply_to_comment_id = 0
+      AND created_at %s $3
+      %s
+    ORDER BY created_at %s
+    LIMIT $4
+),
+comment_tree AS (
+    SELECT
+        id,
+        team_id,
+        "post_union_id",
+        platform,
+        post_platform_id,
+        user_platform_id,
+        comment_platform_id,
+        full_name,
+        username,
+        avatar_mediafile_id,
+        text,
+        reply_to_comment_id,
+        is_team_reply,
+        created_at,
+		marked_as_ticket
+    FROM top_level_comments
+
+    UNION ALL
+
+    SELECT
+        pc.id,
+        pc.team_id,
+        pc."post_union_id",
+        pc.platform,
+        pc.post_platform_id,
+        pc.user_platform_id,
+        pc.comment_platform_id,
+        pc.full_name,
+        pc.username,
+        pc.avatar_mediafile_id,
+        pc.text,
+        pc.reply_to_comment_id,
+        pc.is_team_reply,
+        pc.created_at,
+		pc.marked_as_ticket
+    FROM post_comment pc
+    JOIN comment_tree ct ON pc.reply_to_comment_id = ct.id
 )
-SELECT id, team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
-    full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
-FROM all_comments
-ORDER BY CASE WHEN reply_to_comment_id IS NULL THEN 0 ELSE 1 END, created_at DESC
-`, comparator, sortOrder,
-	)
-	rows, err := c.db.Queryx(query, postUnionID, offset, limit)
+SELECT
+    id,
+    team_id,
+    "post_union_id",
+    platform,
+    post_platform_id,
+    user_platform_id,
+    comment_platform_id,
+    full_name,
+    username,
+    avatar_mediafile_id,
+    text,
+    reply_to_comment_id,
+    is_team_reply,
+    created_at,
+	marked_as_ticket
+FROM comment_tree
+ORDER BY CASE WHEN reply_to_comment_id = 0 THEN 0 ELSE 1 END, created_at DESC
+`, comparator, markedAsTicketCondition, sortOrder)
+
+	rows, err := c.db.Queryx(query, teamID, postUnionID, offset, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +380,7 @@ ORDER BY CASE WHEN reply_to_comment_id IS NULL THEN 0 ELSE 1 END, created_at DES
 			&comment.ReplyToCommentID,
 			&comment.IsTeamReply,
 			&comment.CreatedAt,
+			&comment.MarkedAsTicket,
 		); err != nil {
 			return nil, err
 		}
@@ -336,17 +433,17 @@ ORDER BY CASE WHEN reply_to_comment_id IS NULL THEN 0 ELSE 1 END, created_at DES
 func (c *Comment) GetCommentInfo(commentID int) (*entity.Comment, error) {
 	// Получаем основную информацию о комментарии
 	row := c.db.QueryRowx(`
-  SELECT id, team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
-         full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at
-  FROM post_comment
-  WHERE id = $1
- `, commentID)
+        SELECT id, team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
+               full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at,
+               marked_as_ticket
+        FROM post_comment
+        WHERE id = $1
+    `, commentID)
 
 	var comment entity.Comment
-	var avatarMediafileID *int // Указатель для NULL значений
+	var avatarMediafileID *int
 
-	// Извлекаем данные в структуру
-	if err := row.Scan(
+	err := row.Scan(
 		&comment.ID,
 		&comment.TeamID,
 		&comment.PostUnionID,
@@ -361,7 +458,12 @@ func (c *Comment) GetCommentInfo(commentID int) (*entity.Comment, error) {
 		&comment.ReplyToCommentID,
 		&comment.IsTeamReply,
 		&comment.CreatedAt,
-	); err != nil {
+		&comment.MarkedAsTicket,
+	)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, repo.ErrCommentNotFound
+	case err != nil:
 		return nil, err
 	}
 

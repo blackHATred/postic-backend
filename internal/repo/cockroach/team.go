@@ -17,6 +17,18 @@ func NewTeam(db *sqlx.DB) repo.Team {
 	return &Team{db: db}
 }
 
+func (t *Team) GetTeamIDByVKGroupID(groupId int) (int, error) {
+	var teamId int
+	err := t.db.Get(&teamId, "SELECT team_id FROM channel_vk WHERE group_id = $1", groupId)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, repo.ErrTeamNotFound
+	case err != nil:
+		return 0, err
+	}
+	return teamId, nil
+}
+
 func (t *Team) GetTeamIDByTGDiscussionID(discussionId int) (int, error) {
 	var teamId int
 	err := t.db.Get(&teamId, "SELECT team_id FROM channel_tg WHERE discussion_id = $1", discussionId)
@@ -165,4 +177,32 @@ func (t *Team) GetTeamIDByPostUnionID(postUnionID int) (int, error) {
 		return 0, err
 	}
 	return teamId, nil
+}
+
+func (t *Team) PutVKGroup(teamId int, groupId int, adminApiKey string, groupApiKey string) error {
+	_, err := t.db.Exec(
+		"INSERT INTO channel_vk (team_id, group_id, admin_api_key, group_api_key) VALUES ($1, $2, $3, $4) "+
+			"ON CONFLICT (team_id) DO UPDATE SET group_id = $2, admin_api_key = $3, group_api_key = $4, last_updated_timestamp = NOW()",
+		teamId, groupId, adminApiKey, groupApiKey,
+	)
+	return err
+}
+
+func (t *Team) GetVKCredsByTeamID(teamId int) (int, string, string, error) {
+	var groupId int
+	var adminApiKey, groupApiKey string
+
+	err := t.db.QueryRow(
+		"SELECT group_id, admin_api_key, group_api_key FROM channel_vk WHERE team_id = $1",
+		teamId,
+	).Scan(&groupId, &adminApiKey, &groupApiKey)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, "", "", repo.ErrTGChannelNotFound
+		}
+		return 0, "", "", err
+	}
+
+	return groupId, adminApiKey, groupApiKey, nil
 }

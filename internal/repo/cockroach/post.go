@@ -158,7 +158,7 @@ func (p *PostDB) AddPostUnion(union *entity.PostUnion) (int, error) {
 }
 
 func (p *PostDB) EditPostUnion(union *entity.PostUnion) error {
-	// Begin a transaction since we'll be updating multiple tables
+	// Начинаем транзакцию на время редактирования нескольких таблиц
 	tx, err := p.db.Beginx()
 	if err != nil {
 		return err
@@ -169,7 +169,7 @@ func (p *PostDB) EditPostUnion(union *entity.PostUnion) error {
 		}
 	}()
 
-	// Update the post_union record
+	// Обновляем запись
 	query := `
         UPDATE post_union
         SET text = $1, platforms = $2, pub_datetime = $3
@@ -180,29 +180,31 @@ func (p *PostDB) EditPostUnion(union *entity.PostUnion) error {
 		return err
 	}
 
-	// Delete existing attachments
-	deleteQuery := `
-        DELETE FROM post_union_mediafile
-        WHERE post_union_id = $1
-    `
-	_, err = tx.Exec(deleteQuery, union.ID)
-	if err != nil {
-		return err
-	}
+	/*
+			// Удаляем существующие аттачи
+			deleteQuery := `
+		        DELETE FROM post_union_mediafile
+		        WHERE post_union_id = $1
+		    `
+			_, err = tx.Exec(deleteQuery, union.ID)
+			if err != nil {
+				return err
+			}
 
-	// Add new attachments
-	for _, attachment := range union.Attachments {
-		attachmentQuery := `
-            INSERT INTO post_union_mediafile (post_union_id, mediafile_id)
-            VALUES ($1, $2)
-        `
-		_, err = tx.Exec(attachmentQuery, union.ID, attachment.ID)
-		if err != nil {
-			return err
-		}
-	}
+			// Добавляем новые аттачи
+			for _, attachment := range union.Attachments {
+				attachmentQuery := `
+		            INSERT INTO post_union_mediafile (post_union_id, mediafile_id)
+		            VALUES ($1, $2)
+		        `
+				_, err = tx.Exec(attachmentQuery, union.ID, attachment.ID)
+				if err != nil {
+					return err
+				}
+			}
+	*/
 
-	// Commit the transaction
+	// Коммитим
 	return tx.Commit()
 }
 
@@ -364,6 +366,22 @@ func (p *PostDB) GetPostPlatform(postUnionID int, platform string) (*entity.Post
 	if err != nil {
 		return nil, err
 	}
+
+	// Если это Telegram, получаем связанные сообщения из медиа-группы
+	if platform == "tg" {
+		groupQuery := `
+			SELECT tg_post_id, post_platform_id
+			FROM tg_post_platform_group
+			WHERE post_platform_id = $1
+		`
+		var tgGroups []entity.TgPostPlatformGroup
+		err = p.db.Select(&tgGroups, groupQuery, postPlatform.ID)
+		if err != nil {
+			return nil, err
+		}
+		postPlatform.TgPostPlatformGroup = tgGroups
+	}
+
 	return &postPlatform, nil
 }
 
@@ -381,6 +399,22 @@ func (p *PostDB) GetPostPlatformByPlatformPostID(platformID int, platform string
 	case err != nil:
 		return nil, err
 	}
+
+	// Если это Telegram, получаем связанные сообщения из медиа-группы
+	if platform == "tg" {
+		groupQuery := `
+			SELECT tg_post_id, post_platform_id
+			FROM tg_post_platform_group
+			WHERE post_platform_id = $1
+		`
+		var tgGroups []entity.TgPostPlatformGroup
+		err = p.db.Select(&tgGroups, groupQuery, postPlatform.ID)
+		if err != nil {
+			return nil, err
+		}
+		postPlatform.TgPostPlatformGroup = tgGroups
+	}
+
 	return &postPlatform, nil
 }
 
@@ -395,7 +429,95 @@ func (p *PostDB) AddPostPlatform(postPlatform *entity.PostPlatform) (int, error)
 	if err != nil {
 		return 0, err
 	}
+
+	// Добавляем связанные сообщения для Telegram, если они есть
+	if postPlatform.Platform == "tg" && len(postPlatform.TgPostPlatformGroup) > 0 {
+		for _, tgGroup := range postPlatform.TgPostPlatformGroup {
+			groupQuery := `
+				INSERT INTO tg_post_platform_group (tg_post_id, post_platform_id)
+				VALUES ($1, $2)
+			`
+			_, err := p.db.Exec(groupQuery, tgGroup.TgPostID, postPlatformID)
+			if err != nil {
+				return postPlatformID, err
+			}
+		}
+	}
+
 	return postPlatformID, nil
+}
+
+func (p *PostDB) DeletePlatformFromPostUnion(postUnionID int, platform string) error {
+	// Начинаем транзакцию
+	tx, err := p.db.Beginx()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Получаем текущее состояние с блокировкой
+	var platforms []string
+	query := `
+		SELECT platforms
+		FROM post_union
+		WHERE id = $1
+		FOR UPDATE
+	`
+	err = tx.QueryRow(query, postUnionID).Scan(pq.Array(&platforms))
+	if errors.Is(err, sql.ErrNoRows) {
+		tx.Rollback()
+		return nil // Запись уже удалена, ничего не делаем
+	}
+	if err != nil {
+		return err
+	}
+
+	// Удаляем указанную платформу из массива
+	newPlatforms := make([]string, 0, len(platforms))
+	platformFound := false
+	for _, p := range platforms {
+		if p != platform {
+			newPlatforms = append(newPlatforms, p)
+		} else {
+			platformFound = true
+		}
+	}
+
+	// Если платформа не найдена, ничего не делаем
+	if !platformFound {
+		tx.Rollback()
+		return nil
+	}
+
+	// Если массив пустой, удаляем запись полностью
+	if len(newPlatforms) == 0 {
+		deleteQuery := `
+			DELETE FROM post_union
+			WHERE id = $1
+		`
+		_, err = tx.Exec(deleteQuery, postUnionID)
+		if err != nil {
+			return err
+		}
+	} else {
+		// Обновляем запись с новым массивом
+		updateQuery := `
+			UPDATE post_union
+			SET platforms = $1
+			WHERE id = $2
+		`
+		_, err = tx.Exec(updateQuery, pq.Array(newPlatforms), postUnionID)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Коммитим транзакцию
+	return tx.Commit()
 }
 
 func (p *PostDB) DeletePostPlatform() error {

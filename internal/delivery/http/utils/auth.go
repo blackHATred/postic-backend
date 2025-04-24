@@ -52,6 +52,7 @@ func (a *AuthManager) CheckAuth(tokenString string) (int, error) {
 	if !token.Valid {
 		return -1, ErrUnauthorized
 	}
+	// todo: проверить существование пользователя
 	return claims.UserID, nil
 }
 

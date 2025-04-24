@@ -28,7 +28,6 @@ func (u *User) Configure(server *echo.Group) {
 	server.POST("/register", u.Register)
 	server.POST("/login", u.Login)
 	server.GET("/me", u.Me)
-	server.PUT("/set/vk", u.SetVK)
 }
 
 func (u *User) Register(c echo.Context) error {
@@ -90,38 +89,5 @@ func (u *User) Me(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, echo.Map{
 		"user_id": userId,
-	})
-}
-
-func (u *User) SetVK(c echo.Context) error {
-	// Устанавливает группу вк, управляемую пользователем
-	vkRequest := &entity.SetVKRequest{}
-	err := utils.ReadJSON(c, &vkRequest)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, echo.Map{
-			"error": "Неверный формат запроса",
-		})
-	}
-	userId, err := u.authManager.CheckAuthFromContext(c)
-	switch {
-	case errors.Is(err, utils.ErrUnauthorized):
-		return c.JSON(http.StatusUnauthorized, echo.Map{
-			"error": "Пользователь не авторизован",
-		})
-	case err != nil:
-		c.Logger().Errorf("Ошибка при проверке авторизации пользователя: %v", err)
-		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": "Произошла непредвиденная ошибка",
-		})
-	}
-	err = u.userUseCase.SetVK(userId, vkRequest.GroupID, vkRequest.ApiKey)
-	if err != nil {
-		c.Logger().Errorf("Ошибка при установке группы ВК: %v", err)
-		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": "Произошла непредвиденная ошибка",
-		})
-	}
-	return c.JSON(http.StatusOK, echo.Map{
-		"message": "Группа ВК установлена",
 	})
 }

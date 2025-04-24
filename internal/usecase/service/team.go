@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"github.com/SevereCloud/vksdk/v3/api"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
@@ -222,6 +223,53 @@ func (t *Team) Platforms(userID, teamID int) (*entity.TeamPlatforms, error) {
 }
 
 func (t *Team) SetVK(request *entity.SetVKRequest) error {
-	//TODO implement me
-	panic("implement me")
+	// Проверяем, что пользователь админ команды
+	roles, err := t.teamRepo.GetTeamUserRoles(request.TeamID, request.RequestUserID)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(roles, repo.AdminRole) {
+		return usecase.ErrUserForbidden
+	}
+	// Проверяем валидность пользовательского токена
+	vkAdmin := api.NewVK(request.AdminApiKey)
+	userInfo, err := vkAdmin.UsersGet(api.Params{})
+	if err != nil {
+		return errors.Join(usecase.ErrUserForbidden, errors.New("invalid admin token"))
+	}
+	if len(userInfo) == 0 {
+		return errors.Join(usecase.ErrUserForbidden, errors.New("invalid admin token"))
+	}
+
+	// Проверяем, что пользователь является администратором указанной группы
+	groupInfo, err := vkAdmin.GroupsGetByID(api.Params{
+		"group_id": request.GroupID,
+		"fields":   "is_admin",
+	})
+	if err != nil {
+		return err
+	}
+	if len(groupInfo.Groups) == 0 || !groupInfo.Groups[0].IsAdmin {
+		return errors.Join(usecase.ErrUserForbidden, errors.New("user is not an admin of the group"))
+	}
+
+	// Проверяем валидность токена сообщества
+	vkGroup := api.NewVK(request.GroupApiKey)
+	groupInfo, err = vkGroup.GroupsGetByID(api.Params{
+		"group_id": request.GroupID,
+	})
+	if err != nil {
+		return errors.Join(usecase.ErrUserForbidden, errors.New("invalid group token"))
+	}
+	if len(groupInfo.Groups) == 0 {
+		return errors.Join(usecase.ErrUserForbidden, errors.New("invalid group token or group not found"))
+	}
+
+	// Сохраняем данные в репозиторий
+	err = t.teamRepo.PutVKGroup(request.TeamID, request.GroupID, request.AdminApiKey, request.GroupApiKey)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

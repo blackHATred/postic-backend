@@ -12,8 +12,6 @@ type PostPlatform interface {
 	EditPost(request *entity.EditPostRequest) (int, error)
 	// DeletePost ставит в очередь задачу по удалению поста. Возвращает айди созданного action
 	DeletePost(request *entity.DeletePostRequest) (int, error)
-	// DoAction добавляет операцию к PostUnion в очередь. Возвращает айди созданного action
-	DoAction(request *entity.DoActionRequest) ([]int, error)
 }
 
 type PostUnion interface {
@@ -30,6 +28,8 @@ type PostUnion interface {
 	GetPosts(request *entity.GetPostsRequest) ([]*entity.PostUnion, error)
 	// GetPostStatus возвращает статусы публикации поста по каждой из платформ
 	GetPostStatus(request *entity.PostStatusRequest) ([]*entity.PostActionResponse, error)
+	// DoAction добавляет операцию к PostUnion в очередь. Возвращает айди созданного action
+	DoAction(request *entity.DoActionRequest) (int, error)
 }
 
 var (

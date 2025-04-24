@@ -22,15 +22,17 @@ type Comment struct {
 	IsTeamReply       bool      `json:"is_team_reply" db:"is_team_reply"`
 	CreatedAt         time.Time `json:"created_at" db:"created_at"`
 	Attachments       []*Upload `json:"attachments"`
+	MarkedAsTicket    bool      `json:"marked_as_ticket" db:"marked_as_ticket"`
 }
 
 type GetCommentsRequest struct {
-	UserID      int       `query:"-"`
-	TeamID      int       `query:"team_id"`
-	PostUnionID int       `query:"post_union_id"`
-	Offset      time.Time `query:"offset"`
-	Before      bool      `query:"before"`
-	Limit       int       `query:"limit"`
+	UserID         int       `query:"-"`
+	TeamID         int       `query:"team_id"`
+	PostUnionID    int       `query:"post_union_id"`
+	Offset         time.Time `query:"offset"`
+	Before         bool      `query:"before"`
+	Limit          int       `query:"limit"`
+	MarkedAsTicket *bool     `query:"marked_as_ticket"`
 }
 
 type DeleteCommentRequest struct {
@@ -79,4 +81,11 @@ type ReplyIdeasRequest struct {
 
 type ReplyIdeasResponse struct {
 	Ideas []string `json:"ideas"`
+}
+
+type MarkAsTicketRequest struct {
+	UserID         int  `json:"-"`
+	TeamID         int  `json:"team_id"`
+	PostCommentID  int  `json:"comment_id"`
+	MarkedAsTicket bool `json:"marked_as_ticket"`
 }

@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"github.com/labstack/gommon/log"
 	"net/http"
 	"postic-backend/internal/entity"
@@ -13,15 +14,16 @@ import (
 )
 
 type Comment struct {
-	commentRepo      repo.Comment
-	postRepo         repo.Post
-	teamRepo         repo.Team
-	telegramListener usecase.Listener
-	telegramAction   usecase.CommentActionPlatform
-	summarizeURL     string
-	replyIdeasURL    string
-	subscribers      map[entity.Subscriber]chan *entity.CommentEvent
-	mu               sync.Mutex
+	commentRepo       repo.Comment
+	postRepo          repo.Post
+	teamRepo          repo.Team
+	telegramListener  usecase.Listener
+	telegramAction    usecase.CommentActionPlatform
+	vkontakteListener usecase.Listener
+	summarizeURL      string
+	replyIdeasURL     string
+	subscribers       map[entity.Subscriber]chan *entity.CommentEvent
+	mu                sync.Mutex
 }
 
 func NewComment(
@@ -30,18 +32,20 @@ func NewComment(
 	teamRepo repo.Team,
 	telegramListener usecase.Listener,
 	telegramAction usecase.CommentActionPlatform,
+	vkontakteListener usecase.Listener,
 	summarizeURL string,
 	replyIdeasURL string,
 ) usecase.Comment {
 	return &Comment{
-		commentRepo:      commentRepo,
-		postRepo:         postRepo,
-		teamRepo:         teamRepo,
-		telegramListener: telegramListener,
-		telegramAction:   telegramAction,
-		summarizeURL:     summarizeURL,
-		replyIdeasURL:    replyIdeasURL,
-		subscribers:      make(map[entity.Subscriber]chan *entity.CommentEvent),
+		commentRepo:       commentRepo,
+		postRepo:          postRepo,
+		teamRepo:          teamRepo,
+		telegramListener:  telegramListener,
+		telegramAction:    telegramAction,
+		vkontakteListener: vkontakteListener,
+		summarizeURL:      summarizeURL,
+		replyIdeasURL:     replyIdeasURL,
+		subscribers:       make(map[entity.Subscriber]chan *entity.CommentEvent),
 	}
 }
 
@@ -56,7 +60,11 @@ func (c *Comment) ReplyIdeas(request *entity.ReplyIdeasRequest) (*entity.ReplyId
 	}
 
 	comment, err := c.commentRepo.GetCommentInfo(request.CommentID)
-	if err != nil {
+	switch {
+	case errors.Is(err, repo.ErrCommentNotFound):
+		// комментарий не найден, значит, его удалили
+		return &entity.ReplyIdeasResponse{Ideas: []string{}}, nil
+	case err != nil:
 		return nil, err
 	}
 
@@ -119,7 +127,11 @@ func (c *Comment) GetComment(request *entity.GetCommentRequest) (*entity.Comment
 	}
 
 	comment, err := c.commentRepo.GetCommentInfo(request.CommentID)
-	if err != nil {
+	switch {
+	case errors.Is(err, repo.ErrCommentNotFound):
+		// комментарий не найден, значит, его удалили
+		return nil, usecase.ErrCommentNotFound
+	case err != nil:
 		return nil, err
 	}
 	// проверяем, что комментарий принадлежит этой команде
@@ -157,7 +169,7 @@ func (c *Comment) GetLastComments(request *entity.GetCommentsRequest) ([]*entity
 
 	// Получаем комментарии из репозитория, используя текущее время как верхнюю границу
 	// для получения самых последних комментариев
-	comments, err := c.commentRepo.GetComments(request.PostUnionID, request.Offset, request.Before, request.Limit)
+	comments, err := c.commentRepo.GetComments(request.TeamID, request.PostUnionID, request.Offset, request.Before, request.Limit, request.MarkedAsTicket)
 	if err != nil {
 		return nil, err
 	}
@@ -237,16 +249,15 @@ func (c *Comment) Subscribe(request *entity.Subscriber) (<-chan *entity.CommentE
 		PostUnionID: request.PostUnionID,
 	}
 
-	ch := make(chan *entity.CommentEvent)
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Если уже есть подписка, закрываем старый канал перед созданием нового
+	// Если уже есть подписка, возвращаем тот же канал
 	if oldCh, exists := c.subscribers[sub]; exists {
-		close(oldCh)
+		return oldCh, nil
 	}
 
+	ch := make(chan *entity.CommentEvent)
 	c.subscribers[sub] = ch
 
 	go func() {
@@ -254,6 +265,7 @@ func (c *Comment) Subscribe(request *entity.Subscriber) (<-chan *entity.CommentE
 		// а Action возвращает удаления комментариев другими модераторами
 		tgListenerCh := c.telegramListener.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
 		tgActionCh := c.telegramAction.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
+		// vkListenerCh := c.vkontakteListener.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
 
 		// объединяем каналы
 		for {
@@ -268,7 +280,6 @@ func (c *Comment) Subscribe(request *entity.Subscriber) (<-chan *entity.CommentE
 					continue
 				}
 				ch <- comment
-
 			case comment, ok := <-tgActionCh:
 				if !ok {
 					tgActionCh = nil
@@ -293,14 +304,14 @@ func (c *Comment) Unsubscribe(request *entity.Subscriber) {
 		PostUnionID: request.PostUnionID,
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if ch, exists := c.subscribers[sub]; exists {
 		c.telegramListener.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
 		c.telegramAction.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
+		//c.vkontakteListener.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
 		close(ch)
 		delete(c.subscribers, sub)
 	}
+	c.mu.Unlock()
 }
 
 func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error) {
@@ -314,8 +325,14 @@ func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 	}
 	// получаем оригинальный комментарий
 	comment, err := c.commentRepo.GetCommentInfo(request.CommentID)
-	if err != nil {
+	switch {
+	case errors.Is(err, repo.ErrCommentNotFound):
+		return 0, usecase.ErrCommentNotFound
+	case err != nil:
 		return 0, err
+	}
+	if comment.TeamID != request.TeamID {
+		return 0, usecase.ErrUserForbidden
 	}
 	// делегируем отправку комментария в Telegram
 	if comment.Platform == "tg" {
@@ -335,12 +352,47 @@ func (c *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 	}
 	// получаем оригинальный комментарий
 	comment, err := c.commentRepo.GetCommentInfo(request.PostCommentID)
-	if err != nil {
+	switch {
+	case errors.Is(err, repo.ErrCommentNotFound):
+		return nil
+	case err != nil:
 		return err
+	}
+	if comment.TeamID != request.TeamID {
+		return usecase.ErrUserForbidden
 	}
 	// делегируем удаление комментария в Telegram
 	if comment.Platform == "tg" {
 		return c.telegramAction.DeleteComment(request)
+	}
+	return nil
+}
+
+func (c *Comment) MarkAsTicket(request *entity.MarkAsTicketRequest) error {
+	// проверяем права пользователя
+	roles, err := c.teamRepo.GetTeamUserRoles(request.TeamID, request.UserID)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(roles, repo.AdminRole) && !slices.Contains(roles, repo.CommentsRole) {
+		return usecase.ErrUserForbidden
+	}
+	// получаем оригинальный комментарий
+	comment, err := c.commentRepo.GetCommentInfo(request.PostCommentID)
+	switch {
+	case errors.Is(err, repo.ErrCommentNotFound):
+		return usecase.ErrCommentNotFound
+	case err != nil:
+		return err
+	}
+	if comment.TeamID != request.TeamID {
+		return usecase.ErrUserForbidden
+	}
+	// обновляем комментарий, помечая (или наоборот, убирая) его как тикет
+	comment.MarkedAsTicket = request.MarkedAsTicket
+	err = c.commentRepo.EditComment(comment)
+	if err != nil {
+		return err
 	}
 	return nil
 }

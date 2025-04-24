@@ -41,15 +41,33 @@ services:
     container_name: gateway
     build:
       dockerfile: docker/Dockerfile
-    ports:
-      - "80:80"
-      - "443:443"
     env_file:
       - .env
     depends_on:
       - cockroach
       - minio
 
+  frontend:
+    build:
+      context: https://github.com/blackHATred/postic-frontend.git
+      dockerfile: Dockerfile
+    container_name: frontend
+    env_file:
+      - .env
+
+
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - gateway
+      - frontend
 
 volumes:
   kafka-data:

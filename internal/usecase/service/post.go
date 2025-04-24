@@ -16,6 +16,7 @@ type PostUnion struct {
 	teamRepo   repo.Team
 	uploadRepo repo.Upload
 	telegram   usecase.PostPlatform
+	vkontakte  usecase.PostPlatform
 }
 
 func NewPostUnion(
@@ -23,12 +24,14 @@ func NewPostUnion(
 	teamRepo repo.Team,
 	uploadRepo repo.Upload,
 	telegram usecase.PostPlatform,
+	vkontakte usecase.PostPlatform,
 ) usecase.PostUnion {
 	p := &PostUnion{
 		postRepo:   postRepo,
 		teamRepo:   teamRepo,
 		uploadRepo: uploadRepo,
 		telegram:   telegram,
+		vkontakte:  vkontakte,
 	}
 	// запускаем горутину для мониторинга запланированных постов
 	go p.scheduleListen()
@@ -67,7 +70,14 @@ func (p *PostUnion) scheduleListen() {
 								log.Errorf("error adding post to telegram: %v", err)
 								continue
 							}
-							// другие платформы
+						case "vk":
+							// добавляем пост во вконтакте
+							_, err = p.vkontakte.AddPost(postUnion)
+							if err != nil {
+								log.Errorf("error adding post to vk: %v", err)
+								continue
+							}
+							// другие платформы todo
 						}
 					}
 					// обновляем запись о запланированном посте
@@ -134,7 +144,7 @@ func (p *PostUnion) AddPostUnion(request *entity.AddPostRequest) (int, []int, er
 			CreatedAt:   time.Now(),
 		})
 		// Так как никаких действий с внешними платформами пока не произошло, то возвращаем пустой список actions
-		return postUnionID, []int{}, nil
+		return postUnionID, []int{}, err
 	}
 	// Если pubdatetime <= now, то на каждой из платформ создаем action
 	var actionIDs []int
@@ -142,6 +152,12 @@ func (p *PostUnion) AddPostUnion(request *entity.AddPostRequest) (int, []int, er
 		switch platform {
 		case "tg":
 			platformID, err := p.telegram.AddPost(postUnion)
+			if err != nil {
+				return postUnionID, actionIDs, err
+			}
+			actionIDs = append(actionIDs, platformID)
+		case "vk":
+			platformID, err := p.vkontakte.AddPost(postUnion)
 			if err != nil {
 				return postUnionID, actionIDs, err
 			}
@@ -202,6 +218,15 @@ func (p *PostUnion) EditPostUnion(request *entity.EditPostRequest) ([]int, error
 				return nil, err
 			}
 			actionIDs = append(actionIDs, actionID)
+		case "vk":
+			actionID, err := p.vkontakte.EditPost(&entity.EditPostRequest{
+				PostUnionID: request.PostUnionID,
+				Text:        request.Text,
+			})
+			if err != nil {
+				return nil, err
+			}
+			actionIDs = append(actionIDs, actionID)
 			// todo другие платформы
 		}
 	}
@@ -236,6 +261,16 @@ func (p *PostUnion) DeletePostUnion(request *entity.DeletePostRequest) ([]int, e
 		switch platform {
 		case "tg":
 			actionID, err := p.telegram.DeletePost(&entity.DeletePostRequest{
+				UserID:      request.UserID,
+				TeamID:      request.TeamID,
+				PostUnionID: request.PostUnionID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			actionIDs = append(actionIDs, actionID)
+		case "vk":
+			actionID, err := p.vkontakte.DeletePost(&entity.DeletePostRequest{
 				UserID:      request.UserID,
 				TeamID:      request.TeamID,
 				PostUnionID: request.PostUnionID,
@@ -312,19 +347,18 @@ func (p *PostUnion) GetPostStatus(request *entity.PostStatusRequest) ([]*entity.
 		return nil, usecase.ErrUserForbidden
 	}
 
-	responses := make([]*entity.PostActionResponse, 0)
-
 	actionIDs, err := p.postRepo.GetPostActions(request.PostUnionID)
 	if err != nil {
 		return nil, err
 	}
+	responses := make([]*entity.PostActionResponse, len(actionIDs))
 
-	for _, actionID := range actionIDs {
+	for i, actionID := range actionIDs {
 		action, err := p.postRepo.GetPostAction(actionID)
 		if err != nil {
 			return nil, err
 		}
-		response := &entity.PostActionResponse{
+		responses[i] = &entity.PostActionResponse{
 			PostID:     request.PostUnionID,
 			Platform:   action.Platform,
 			Operation:  action.Operation,
@@ -332,8 +366,94 @@ func (p *PostUnion) GetPostStatus(request *entity.PostStatusRequest) ([]*entity.
 			ErrMessage: action.ErrMessage,
 			CreatedAt:  action.CreatedAt,
 		}
-		responses = append(responses, response)
 	}
 
 	return responses, nil
+}
+
+func (p *PostUnion) DoAction(request *entity.DoActionRequest) (int, error) {
+	// проверяем права пользователя
+	permissions, err := p.teamRepo.GetTeamUserRoles(request.TeamID, request.UserID)
+	if err != nil {
+		return 0, err
+	}
+	if !slices.Contains(permissions, repo.AdminRole) && !slices.Contains(permissions, repo.PostsRole) {
+		return 0, usecase.ErrUserForbidden
+	}
+	// проверяем, что пост принадлежит этой команде
+	postUnion, err := p.postRepo.GetPostUnion(request.PostUnionID)
+	if err != nil {
+		return 0, err
+	}
+	if postUnion.TeamID != request.TeamID {
+		return 0, usecase.ErrUserForbidden
+	}
+
+	switch request.Operation {
+	case "add":
+		switch request.Platform {
+		case "tg":
+			actionID, err := p.telegram.AddPost(postUnion)
+			if err != nil {
+				return 0, err
+			}
+			return actionID, nil
+		case "vk":
+			actionID, err := p.vkontakte.AddPost(postUnion)
+			if err != nil {
+				return 0, err
+			}
+			return actionID, nil
+		}
+	case "delete":
+		switch request.Platform {
+		case "tg":
+			actionID, err := p.telegram.DeletePost(&entity.DeletePostRequest{
+				UserID:      request.UserID,
+				TeamID:      request.TeamID,
+				PostUnionID: request.PostUnionID,
+			})
+			if err != nil {
+				return 0, err
+			}
+			return actionID, nil
+		case "vk":
+			actionID, err := p.vkontakte.DeletePost(&entity.DeletePostRequest{
+				UserID:      request.UserID,
+				TeamID:      request.TeamID,
+				PostUnionID: request.PostUnionID,
+			})
+			if err != nil {
+				return 0, err
+			}
+			return actionID, nil
+		}
+	case "edit":
+		switch request.Platform {
+		case "tg":
+			actionID, err := p.telegram.EditPost(&entity.EditPostRequest{
+				UserID:      request.UserID,
+				TeamID:      request.TeamID,
+				PostUnionID: request.PostUnionID,
+				Text:        postUnion.Text,
+			})
+			if err != nil {
+				return 0, err
+			}
+			return actionID, nil
+		case "vk":
+			actionID, err := p.vkontakte.EditPost(&entity.EditPostRequest{
+				UserID:      request.UserID,
+				TeamID:      request.TeamID,
+				PostUnionID: request.PostUnionID,
+				Text:        postUnion.Text,
+			})
+			if err != nil {
+				return 0, err
+			}
+			return actionID, nil
+		}
+	}
+
+	return 0, nil
 }
