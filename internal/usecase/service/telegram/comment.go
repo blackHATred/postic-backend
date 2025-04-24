@@ -19,7 +19,7 @@ type Comment struct {
 	teamRepo    repo.Team
 	uploadRepo  repo.Upload
 	subscribers map[entity.Subscriber]chan *entity.CommentEvent
-	mu          sync.Mutex // Add this line for thread safety
+	mu          sync.Mutex
 }
 
 func NewTelegramComment(
