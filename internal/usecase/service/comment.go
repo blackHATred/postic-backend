@@ -265,7 +265,7 @@ func (c *Comment) Subscribe(request *entity.Subscriber) (<-chan *entity.CommentE
 		// а Action возвращает удаления комментариев другими модераторами
 		tgListenerCh := c.telegramListener.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
 		tgActionCh := c.telegramAction.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
-		vkListenerCh := c.vkontakteListener.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
+		// vkListenerCh := c.vkontakteListener.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
 
 		// объединяем каналы
 		for {
@@ -273,7 +273,7 @@ func (c *Comment) Subscribe(request *entity.Subscriber) (<-chan *entity.CommentE
 			case comment, ok := <-tgListenerCh:
 				if !ok {
 					tgListenerCh = nil
-					if tgActionCh == nil && vkListenerCh == nil {
+					if tgActionCh == nil {
 						// оба каналы закрыты
 						return
 					}
@@ -283,20 +283,11 @@ func (c *Comment) Subscribe(request *entity.Subscriber) (<-chan *entity.CommentE
 			case comment, ok := <-tgActionCh:
 				if !ok {
 					tgActionCh = nil
-					if tgListenerCh == nil && vkListenerCh == nil {
+					if tgListenerCh == nil {
 						// оба канала закрыты
 						return
 					}
 					continue
-				}
-				ch <- comment
-			case comment, ok := <-vkListenerCh:
-				if !ok {
-					vkListenerCh = nil
-					if tgListenerCh == nil && tgActionCh == nil {
-						// оба канала закрыты
-						return
-					}
 				}
 				ch <- comment
 			}
@@ -316,7 +307,7 @@ func (c *Comment) Unsubscribe(request *entity.Subscriber) {
 	if ch, exists := c.subscribers[sub]; exists {
 		c.telegramListener.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
 		c.telegramAction.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
-		c.vkontakteListener.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
+		//c.vkontakteListener.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
 		close(ch)
 		delete(c.subscribers, sub)
 	}
