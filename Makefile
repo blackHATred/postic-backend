@@ -12,3 +12,12 @@ migration-file:
 .PHONY: run-docker-compose
 run-docker-compose:
 	docker compose up --build -d
+
+.PHONY: gen-nginx-certs
+gen-nginx-certs:
+	@echo "Generating self-signed certificates for Nginx..."
+	@mkdir -p nginx/certs
+	@openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+		-keyout nginx/certs/nginx.key \
+		-out nginx/certs/nginx.crt
+	@echo "Certificates generated in the 'certs' directory."

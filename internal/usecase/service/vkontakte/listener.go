@@ -229,6 +229,16 @@ func (e *EventListener) wallReplyNewHandler(ctx context.Context, obj events.Wall
 		CreatedAt:         time.Unix(int64(obj.Date), 0),
 	}
 
+	// Возможно, это реплай на один из существующих комментариев
+	if obj.ReplyToComment != 0 {
+		replyComment, err := e.commentRepo.GetCommentInfoByPlatformID(obj.ReplyToComment, "vk")
+		if err != nil {
+			log.Errorf("Failed to get comment: %v", err)
+			return
+		}
+		newComment.ReplyToCommentID = replyComment.ID
+	}
+
 	newComment.AvatarMediaFile, err = e.getUserAvatar(userInfo.Avatar)
 	if err != nil {
 		log.Errorf("Failed to get user avatar: %v", err)

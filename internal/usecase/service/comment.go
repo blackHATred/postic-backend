@@ -313,14 +313,14 @@ func (c *Comment) Unsubscribe(request *entity.Subscriber) {
 		PostUnionID: request.PostUnionID,
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if ch, exists := c.subscribers[sub]; exists {
 		c.telegramListener.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
 		c.telegramAction.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
+		c.vkontakteListener.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
 		close(ch)
 		delete(c.subscribers, sub)
 	}
+	c.mu.Unlock()
 }
 
 func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error) {
