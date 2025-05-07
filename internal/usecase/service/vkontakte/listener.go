@@ -22,15 +22,6 @@ import (
 	"time"
 )
 
-type groupListenerKey struct {
-	teamID int
-}
-
-type groupListenerElem struct {
-	vk *api.VK
-	lp *longpoll.LongPoll
-}
-
 type EventListener struct {
 	ctx                   context.Context
 	cancel                context.CancelFunc
@@ -182,6 +173,8 @@ func (e *EventListener) checkForUnwatchedGroups() {
 func (e *EventListener) setupLongPollHandlers(lp *longpoll.LongPoll, teamID int) {
 	lp.WallReplyNew(func(ctx context.Context, object events.WallReplyNewObject) {
 		e.wallReplyNewHandler(ctx, object, teamID)
+		// Заодно обновляем количество просмотров поста
+		// e.updateViewsCount(object.PostID, object.PostOwnerID, teamID)
 	})
 	lp.WallReplyDelete(func(ctx context.Context, object events.WallReplyDeleteObject) {
 		e.wallReplyDeleteHandler(ctx, object, teamID)
@@ -198,6 +191,41 @@ func (e *EventListener) setupLongPollHandlers(lp *longpoll.LongPoll, teamID int)
 	lp.LikeRemove(func(ctx context.Context, object events.LikeRemoveObject) {
 		e.likeRemoveHandler(ctx, object)
 	})
+}
+
+func (e *EventListener) updateViewsCount(postID, ownerID, teamID int) {
+	// Получаем количество просмотров поста по API вк
+	e.mu.Lock()
+	vk, ok := e.vkClients[teamID]
+	e.mu.Unlock()
+	if !ok {
+		log.Errorf("VK client not found for team ID %d", teamID)
+		return
+	}
+	params := api.Params{
+		"posts": fmt.Sprintf("%d_%d", ownerID, postID),
+	}
+	post, err := vk.WallGetByID(params)
+	if err != nil {
+		log.Errorf("Failed to get post by ID: %v", err)
+		return
+	}
+	if len(post.Items) == 0 {
+		log.Errorf("Post not found: %d", postID)
+		return
+	}
+	views := post.Items[0].Views.Count
+	// Обновляем количество просмотров в нашей БД
+	postUnionID, err := e.postRepo.GetPostPlatformByPlatformPostID(postID, "vk")
+	if err != nil {
+		log.Errorf("Failed to get post platform: %v", err)
+		return
+	}
+	err = e.analyticsRepo.SetPostViewsCount(postUnionID.ID, "vk", views)
+	if err != nil {
+		log.Errorf("Failed to update views count: %v", err)
+		return
+	}
 }
 
 func (e *EventListener) wallReplyNewHandler(ctx context.Context, obj events.WallReplyNewObject, teamID int) {
@@ -514,7 +542,7 @@ func (e *EventListener) getUserInfo(teamID, userID int) (*UserInfo, error) {
 	}
 	user, err := vk.UsersGet(api.Params{
 		"user_ids": userID,
-		"fields":   "photo_200",
+		"fields":   "photo_200,domain,first_name,last_name",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user info: %w", err)
@@ -522,7 +550,7 @@ func (e *EventListener) getUserInfo(teamID, userID int) (*UserInfo, error) {
 	if len(user) == 0 {
 		return nil, errors.New("user not found")
 	}
-	userName := user[0].Nickname
+	userName := user[0].Domain
 	fullName := fmt.Sprintf("%s %s", user[0].FirstName, user[0].LastName)
 	avatar := user[0].Photo200
 	return &UserInfo{
@@ -674,8 +702,6 @@ func (e *EventListener) UnsubscribeFromComments(userID, teamID, postUnionID int)
 }
 
 func (e *EventListener) notifySubscribers(commentID, postUnionID, teamID int, eventType string) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
 	// Смотрим, какие участники есть в команде
 	teamMemberIDs, err := e.teamRepo.GetTeamUsers(teamID)
 	if err != nil {
@@ -683,6 +709,8 @@ func (e *EventListener) notifySubscribers(commentID, postUnionID, teamID int, ev
 		return err
 	}
 
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	for _, memberID := range teamMemberIDs {
 		sub := entity.Subscriber{
 			UserID:      memberID,
@@ -697,7 +725,7 @@ func (e *EventListener) notifySubscribers(commentID, postUnionID, teamID int, ev
 				}
 			}()
 		}
-		// также возможен вариант, если подписка осуществлена под конкретный пост
+		// также возможен вариант, когда подписка осуществлена под конкретный пост
 		if postUnionID != 0 {
 			sub.PostUnionID = postUnionID
 			if ch, ok := e.subscribers[sub]; ok {

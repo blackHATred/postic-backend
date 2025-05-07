@@ -23,22 +23,18 @@ type Comment struct {
 }
 
 func NewTelegramComment(
-	token string,
+	bot *tgbotapi.BotAPI,
 	commentRepo repo.Comment,
 	teamRepo repo.Team,
 	uploadRepo repo.Upload,
-) (usecase.CommentActionPlatform, error) {
-	bot, err := tgbotapi.NewBotAPI(token)
-	if err != nil {
-		return nil, err
-	}
+) usecase.CommentActionPlatform {
 	return &Comment{
 		bot:         bot,
 		commentRepo: commentRepo,
 		teamRepo:    teamRepo,
 		uploadRepo:  uploadRepo,
 		subscribers: make(map[entity.Subscriber]chan *entity.CommentEvent),
-	}, nil
+	}
 }
 
 // ReplyComment отправляет комментарий в ответ на другой комментарий от имени группы

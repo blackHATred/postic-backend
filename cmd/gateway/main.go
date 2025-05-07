@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -73,24 +74,20 @@ func main() {
 
 	// запускаем сервисы usecase (бизнес-логика)
 	// -- telegram --
-	telegramPostPlatformUseCase, err := telegram.NewTelegramPost(telegramBotToken, postRepo, teamRepo, uploadRepo)
+	tgBot, err := tgbotapi.NewBotAPI(telegramBotToken)
 	if err != nil {
-		log.Fatalf("Ошибка при создании Post UseCase: %v", err)
+		log.Fatalf("Ошибка при создании Telegram бота: %v", err)
 	}
-	telegramCommentUseCase, err := telegram.NewTelegramComment(telegramBotToken, commentRepo, teamRepo, uploadRepo)
-	if err != nil {
-		log.Fatalf("Ошибка при создании Post Comment UseCase: %v", err)
-	}
+	telegramPostPlatformUseCase := telegram.NewTelegramPost(tgBot, postRepo, teamRepo, uploadRepo)
+	telegramCommentUseCase := telegram.NewTelegramComment(tgBot, commentRepo, teamRepo, uploadRepo)
 	telegramEventListener, err := telegram.NewTelegramEventListener(telegramBotToken, true, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo)
 	if err != nil {
 		log.Fatalf("Ошибка при создании слушателя событий Post: %v", err)
 	}
-	telegramAnalytics, err := telegram.NewTelegramAnalytics(telegramBotToken, teamRepo, postRepo, analyticsRepo)
-	if err != nil {
-		log.Fatalf("Ошибка при создании Telegram Analytics: %v", err)
-	}
+	telegramAnalytics := telegram.NewTelegramAnalytics(teamRepo, postRepo, analyticsRepo)
 	// -- vk --
 	vkPostPlatformUseCase := vkontakte.NewPost(postRepo, teamRepo, uploadRepo)
+	vkCommentUseCase := vkontakte.NewVkontakteComment(commentRepo, teamRepo, uploadRepo)
 	vkEventListener := vkontakte.NewVKEventListener(vkontakteListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo)
 	vkAnalytics := vkontakte.NewVkontakteAnalytics(teamRepo, postRepo, analyticsRepo)
 
@@ -111,6 +108,7 @@ func main() {
 		telegramEventListener,
 		telegramCommentUseCase,
 		vkEventListener,
+		vkCommentUseCase,
 		summarizeURL,
 		replyIdeasURL,
 	)

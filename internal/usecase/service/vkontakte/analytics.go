@@ -29,19 +29,16 @@ func NewVkontakteAnalytics(
 }
 
 func (a *Analytics) UpdateStat(postUnionID int) (*entity.PlatformStats, error) {
-	// Get the post by ID
 	post, err := a.postRepo.GetPostUnion(postUnionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get post by ID: %w", err)
 	}
 
-	// Get post platform to obtain the platform-specific post ID
 	postPlatform, err := a.postRepo.GetPostPlatform(postUnionID, "vk")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get VK post platform: %w", err)
 	}
 
-	// Get existing stats or create new ones
 	stats, err := a.analyticsRepo.GetPostPlatformStatsByPostUnionID(postUnionID, "vk")
 	switch {
 	case errors.Is(err, repo.ErrPostPlatformStatsNotFound):
@@ -63,13 +60,11 @@ func (a *Analytics) UpdateStat(postUnionID int) (*entity.PlatformStats, error) {
 		return nil, fmt.Errorf("failed to get post platform stats: %w", err)
 	}
 
-	// Get VK credentials for the team
 	groupID, adminApiKey, _, err := a.teamRepo.GetVKCredsByTeamID(post.TeamID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get VK credentials: %w", err)
 	}
 
-	// Create VK API client
 	vk := api.NewVK(adminApiKey)
 
 	// Query VK API for post stats
@@ -87,11 +82,6 @@ func (a *Analytics) UpdateStat(postUnionID int) (*entity.PlatformStats, error) {
 
 	if len(response.Items) == 0 {
 		return nil, fmt.Errorf("post not found in VK")
-	}
-
-	// Extract statistics
-	if len(response.Items) == 0 {
-		return nil, fmt.Errorf("no items found in VK response")
 	}
 
 	stats.Views = response.Items[0].Views.Count

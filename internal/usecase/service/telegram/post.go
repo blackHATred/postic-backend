@@ -18,21 +18,17 @@ type Post struct {
 }
 
 func NewTelegramPost(
-	token string,
+	bot *tgbotapi.BotAPI,
 	postRepo repo.Post,
 	teamRepo repo.Team,
 	uploadRepo repo.Upload,
-) (usecase.PostPlatform, error) {
-	bot, err := tgbotapi.NewBotAPI(token)
-	if err != nil {
-		return nil, err
-	}
+) usecase.PostPlatform {
 	return &Post{
 		bot:        bot,
 		postRepo:   postRepo,
 		teamRepo:   teamRepo,
 		uploadRepo: uploadRepo,
-	}, nil
+	}
 }
 
 func (p *Post) createPostAction(request *entity.PostUnion) (int, error) {
