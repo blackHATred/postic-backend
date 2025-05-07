@@ -21,3 +21,10 @@ gen-nginx-certs:
 		-keyout nginx/certs/nginx.key \
 		-out nginx/certs/nginx.crt
 	@echo "Certificates generated in the 'certs' directory."
+
+.PHONY: push-docker
+push-docker:
+	@echo "Pushing Docker images to Docker Hub..."
+	docker build -t ghcr.io/blackhatred/postic-backend:latest .
+	docker push ghcr.io/blackhatred/postic-backend:latest
+	@echo "Docker images pushed successfully."

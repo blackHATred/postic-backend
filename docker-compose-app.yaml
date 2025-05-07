@@ -39,8 +39,7 @@ services:
 
   gateway:
     container_name: gateway
-    build:
-      dockerfile: docker/Dockerfile
+    image: ghcr.io/blackhatred/postic-backend:latest
     env_file:
       - .env
     depends_on:
@@ -48,13 +47,10 @@ services:
       - minio
 
   frontend:
-    build:
-      context: https://github.com/blackHATred/postic-frontend.git
-      dockerfile: Dockerfile
+    image: kristinabu/postic-frontend
     container_name: frontend
     env_file:
       - .env
-
 
   nginx:
     image: nginx:latest
