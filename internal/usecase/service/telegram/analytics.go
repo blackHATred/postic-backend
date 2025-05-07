@@ -3,7 +3,6 @@ package telegram
 import (
 	"errors"
 	"fmt"
-	"github.com/go-telegram/bot"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
@@ -11,28 +10,21 @@ import (
 )
 
 type Analytics struct {
-	bot           *bot.Bot
 	teamRepo      repo.Team
 	postRepo      repo.Post
 	analyticsRepo repo.Analytics
 }
 
 func NewTelegramAnalytics(
-	token string,
 	teamRepo repo.Team,
 	postRepo repo.Post,
 	analyticsRepo repo.Analytics,
-) (usecase.AnalyticsPlatform, error) {
-	telegramBot, err := bot.New(token)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create telegram telegramBot: %w", err)
-	}
+) usecase.AnalyticsPlatform {
 	return &Analytics{
-		bot:           telegramBot,
 		teamRepo:      teamRepo,
 		postRepo:      postRepo,
 		analyticsRepo: analyticsRepo,
-	}, nil
+	}
 }
 
 func (a *Analytics) UpdateStat(postUnionID int) (*entity.PlatformStats, error) {

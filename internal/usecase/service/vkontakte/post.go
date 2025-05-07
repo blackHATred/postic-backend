@@ -99,7 +99,6 @@ func (p *Post) publishPost(request *entity.PostUnion, actionId int) {
 		"from_group": 1, // от имени группы
 	}
 
-	// Handle attachments
 	if len(request.Attachments) > 0 {
 		attachmentsStr, err := p.uploadAttachments(vk, groupId, request.Attachments)
 		if err != nil {

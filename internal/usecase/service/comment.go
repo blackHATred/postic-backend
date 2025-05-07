@@ -20,6 +20,7 @@ type Comment struct {
 	telegramListener  usecase.Listener
 	telegramAction    usecase.CommentActionPlatform
 	vkontakteListener usecase.Listener
+	vkontakteAction   usecase.CommentActionPlatform
 	summarizeURL      string
 	replyIdeasURL     string
 	subscribers       map[entity.Subscriber]chan *entity.CommentEvent
@@ -33,6 +34,7 @@ func NewComment(
 	telegramListener usecase.Listener,
 	telegramAction usecase.CommentActionPlatform,
 	vkontakteListener usecase.Listener,
+	vkontakteAction usecase.CommentActionPlatform,
 	summarizeURL string,
 	replyIdeasURL string,
 ) usecase.Comment {
@@ -43,6 +45,7 @@ func NewComment(
 		telegramListener:  telegramListener,
 		telegramAction:    telegramAction,
 		vkontakteListener: vkontakteListener,
+		vkontakteAction:   vkontakteAction,
 		summarizeURL:      summarizeURL,
 		replyIdeasURL:     replyIdeasURL,
 		subscribers:       make(map[entity.Subscriber]chan *entity.CommentEvent),
@@ -107,7 +110,7 @@ func (c *Comment) ReplyIdeas(request *entity.ReplyIdeasRequest) (*entity.ReplyId
 	if err != nil {
 		return nil, err
 	}
-	log.Infof("response: %v", serverAnswer)
+	//log.Infof("response: %v", serverAnswer)
 
 	if serverAnswer.NoAnswer {
 		// нет ответа
@@ -259,35 +262,37 @@ func (c *Comment) Subscribe(request *entity.Subscriber) (<-chan *entity.CommentE
 
 	ch := make(chan *entity.CommentEvent)
 	c.subscribers[sub] = ch
-
 	go func() {
-		// Подписываемся сразу в нескольких местах. Listener возвращает новые комментарии и редактирования,
-		// а Action возвращает удаления комментариев другими модераторами
 		tgListenerCh := c.telegramListener.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
-		tgActionCh := c.telegramAction.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
-		// vkListenerCh := c.vkontakteListener.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
-
-		// объединяем каналы
 		for {
 			select {
 			case comment, ok := <-tgListenerCh:
 				if !ok {
-					tgListenerCh = nil
-					if tgActionCh == nil {
-						// оба каналы закрыты
-						return
-					}
-					continue
+					return
 				}
 				ch <- comment
+			}
+		}
+	}()
+	go func() {
+		tgActionCh := c.telegramAction.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
+		for {
+			select {
 			case comment, ok := <-tgActionCh:
 				if !ok {
-					tgActionCh = nil
-					if tgListenerCh == nil {
-						// оба канала закрыты
-						return
-					}
-					continue
+					return
+				}
+				ch <- comment
+			}
+		}
+	}()
+	go func() {
+		vkListenerCh := c.vkontakteListener.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
+		for {
+			select {
+			case comment, ok := <-vkListenerCh:
+				if !ok {
+					return
 				}
 				ch <- comment
 			}
@@ -307,7 +312,7 @@ func (c *Comment) Unsubscribe(request *entity.Subscriber) {
 	if ch, exists := c.subscribers[sub]; exists {
 		c.telegramListener.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
 		c.telegramAction.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
-		//c.vkontakteListener.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
+		c.vkontakteListener.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
 		close(ch)
 		delete(c.subscribers, sub)
 	}
@@ -334,8 +339,11 @@ func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 	if comment.TeamID != request.TeamID {
 		return 0, usecase.ErrUserForbidden
 	}
-	// делегируем отправку комментария в Telegram
-	if comment.Platform == "tg" {
+	// делегируем отправку комментария
+	switch comment.Platform {
+	case "vk":
+		return c.vkontakteAction.ReplyComment(request)
+	case "tg":
 		return c.telegramAction.ReplyComment(request)
 	}
 	return 0, nil
@@ -361,8 +369,10 @@ func (c *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 	if comment.TeamID != request.TeamID {
 		return usecase.ErrUserForbidden
 	}
-	// делегируем удаление комментария в Telegram
-	if comment.Platform == "tg" {
+	switch comment.Platform {
+	case "vk":
+		return c.vkontakteAction.DeleteComment(request)
+	case "tg":
 		return c.telegramAction.DeleteComment(request)
 	}
 	return nil

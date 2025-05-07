@@ -133,3 +133,18 @@ func (a *Analytics) CommentsCount(postUnionID int) (int, error) {
 
 	return count, nil
 }
+
+func (a *Analytics) SetPostViewsCount(postUnionID int, platform string, postViewsCount int) error {
+	query := `
+		UPDATE post_platform_stats
+		SET views = $1
+		WHERE post_union_id = $2 AND platform = $3
+	`
+
+	_, err := a.db.Exec(query, postViewsCount, postUnionID, platform)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

@@ -13,6 +13,7 @@ type Analytics interface {
 	GetPostPlatformStatsByPeriod(startDate, endDate time.Time, platform string) ([]*entity.PostPlatformStats, error)
 	// EditPostPlatformStats обновляет статистику по посту и платформе
 	EditPostPlatformStats(stats *entity.PostPlatformStats) error
+	SetPostViewsCount(postUnionID int, platform string, postViewsCount int) error
 	// AddPostPlatformStats добавляет статистику по посту и платформе
 	AddPostPlatformStats(stats *entity.PostPlatformStats) error
 	// CommentsCount возвращает количество комментариев к посту
