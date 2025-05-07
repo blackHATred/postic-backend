@@ -287,7 +287,7 @@ WITH RECURSIVE top_level_comments AS (
 		marked_as_ticket
     FROM post_comment
     WHERE ($1 = 0 OR team_id = $1)
-	  AND ($1 = 0 OR "post_union_id" = $2)
+	  AND ($2 = 0 OR "post_union_id" = $2)
       AND reply_to_comment_id = 0
       AND created_at %s $3
       %s
