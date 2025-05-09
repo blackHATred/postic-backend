@@ -121,6 +121,7 @@ func (p *Post) handleNoAttachments(request *entity.PostUnion, actionId, tgChanne
 			PostUnionId: request.ID,
 			PostId:      msg.MessageID,
 			Platform:    "tg",
+			TGChannelID: &tgChannelId,
 		})
 		return err
 	})
@@ -206,6 +207,7 @@ func (p *Post) handleMultipleAttachments(request *entity.PostUnion, actionId, tg
 					PostUnionId:         request.ID,
 					PostId:              messages[0].MessageID,
 					Platform:            "tg",
+					TGChannelID:         &tgChannelId,
 					TgPostPlatformGroup: tgMediaGroupMessages,
 				})
 				return err
@@ -236,6 +238,7 @@ func (p *Post) sendPhoto(request *entity.PostUnion, actionId, tgChannelId int, u
 			PostUnionId: request.ID,
 			PostId:      msg.MessageID,
 			Platform:    "tg",
+			TGChannelID: &tgChannelId,
 		})
 		return err
 	})
@@ -264,6 +267,7 @@ func (p *Post) sendVideo(request *entity.PostUnion, actionId, tgChannelId int, u
 			PostUnionId: request.ID,
 			PostId:      msg.MessageID,
 			Platform:    "tg",
+			TGChannelID: &tgChannelId,
 		})
 		return err
 	})

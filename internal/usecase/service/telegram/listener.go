@@ -132,7 +132,16 @@ func (t *EventListener) StopListener() {
 }
 
 func (t *EventListener) UpdateStats(update *models.Update) {
-	post, err := t.postRepo.GetPostPlatformByPlatformPostID(update.MessageReactionCount.MessageID, "tg")
+	tgChannelID, err := t.teamRepo.GetTGChannelByDiscussionId(int(update.MessageReactionCount.Chat.ID))
+	if errors.Is(err, repo.ErrTGChannelNotFound) {
+		log.Debugf("Channel not found for discussion ID: %d", update.MessageReactionCount.Chat.ID)
+		return
+	}
+	post, err := t.postRepo.GetPostPlatformByPost(
+		update.MessageReactionCount.MessageID,
+		tgChannelID,
+		"tg",
+	)
 	switch {
 	case errors.Is(err, repo.ErrPostPlatformNotFound):
 		// игнорируем такую ошибку
@@ -488,7 +497,7 @@ func (t *EventListener) handleComment(update *models.Update) error {
 	} else {
 		return nil
 	}
-	_, err := t.teamRepo.GetTGChannelByDiscussionId(discussionID)
+	tgChannelID, err := t.teamRepo.GetTGChannelByDiscussionId(discussionID)
 	if errors.Is(err, repo.ErrTGChannelNotFound) {
 		return nil
 	}
@@ -504,9 +513,11 @@ func (t *EventListener) handleComment(update *models.Update) error {
 		if update.Message.ReplyToMessage.ForwardOrigin != nil &&
 			update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel != nil {
 
-			log.Debugf("Received reply to forwarded post: %s", update.Message.ReplyToMessage.Text)
-			postTg, err = t.postRepo.GetPostPlatformByPlatformPostID(
-				update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel.MessageID, "tg")
+			postTg, err = t.postRepo.GetPostPlatformByPost(
+				update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel.MessageID,
+				tgChannelID,
+				"tg",
+			)
 
 			if errors.Is(err, repo.ErrPostPlatformNotFound) {
 				// Если это не пост, то возможно это ответ на комментарий

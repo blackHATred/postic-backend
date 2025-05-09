@@ -60,16 +60,16 @@ func (a *Analytics) UpdateStat(postUnionID int) (*entity.PlatformStats, error) {
 		return nil, fmt.Errorf("failed to get post platform stats: %w", err)
 	}
 
-	groupID, adminApiKey, _, err := a.teamRepo.GetVKCredsByTeamID(post.TeamID)
+	vkChannel, err := a.teamRepo.GetVKCredsByTeamID(post.TeamID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get VK credentials: %w", err)
 	}
 
-	vk := api.NewVK(adminApiKey)
+	vk := api.NewVK(vkChannel.AdminAPIKey)
 
 	// Query VK API for post stats
 	params := api.Params{
-		"posts":              fmt.Sprintf("-%d_%d", groupID, postPlatform.PostId),
+		"posts":              fmt.Sprintf("-%d_%d", vkChannel.GroupID, postPlatform.PostId),
 		"extended":           1,
 		"fields":             "views",
 		"copy_history_depth": 0,

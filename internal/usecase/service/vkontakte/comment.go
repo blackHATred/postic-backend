@@ -75,17 +75,17 @@ func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 	}
 
 	// Получаем данные группы и ключ администратора
-	groupID, adminAPIKey, _, err := c.teamRepo.GetVKCredsByTeamID(request.TeamID)
+	vkChannel, err := c.teamRepo.GetVKCredsByTeamID(request.TeamID)
 	if err != nil {
 		return 0, err
 	}
 
-	vk := api.NewVK(adminAPIKey)
+	vk := api.NewVK(vkChannel.AdminAPIKey)
 
 	// Подготавливаем параметры для ответа
 	params := api.Params{
-		"owner_id":         -groupID,
-		"from_group":       groupID,
+		"owner_id":         -vkChannel.GroupID,
+		"from_group":       vkChannel.GroupID,
 		"post_id":          *comment.PostPlatformID,
 		"reply_to_comment": comment.CommentPlatformID,
 		"message":          request.Text,
@@ -117,7 +117,7 @@ func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 				"name":        "Video Reply",
 				"description": "Uploaded via API",
 				"wallpost":    0,
-				"group_id":    groupID,
+				"group_id":    vkChannel.GroupID,
 			}, upload.RawBytes)
 			if err != nil {
 				log.Errorf("Failed to upload video: %v", err)
@@ -186,15 +186,15 @@ func (c *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 		return err
 	}
 
-	groupID, adminAPIKey, _, err := c.teamRepo.GetVKCredsByTeamID(request.TeamID)
+	vkChannel, err := c.teamRepo.GetVKCredsByTeamID(request.TeamID)
 	if err != nil {
 		return err
 	}
 
-	vk := api.NewVK(adminAPIKey)
+	vk := api.NewVK(vkChannel.AdminAPIKey)
 
 	params := api.Params{
-		"owner_id":   -groupID,
+		"owner_id":   -vkChannel.GroupID,
 		"comment_id": comment.CommentPlatformID,
 	}
 

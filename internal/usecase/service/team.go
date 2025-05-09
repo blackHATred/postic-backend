@@ -221,11 +221,11 @@ func (t *Team) Platforms(userID, teamID int) (*entity.TeamPlatforms, error) {
 	platforms.TGChannelID = channelID
 	platforms.TGDiscussionID = discussionID
 	// vkontakte
-	groupID, _, _, err := t.teamRepo.GetVKCredsByTeamID(teamID)
+	vkChannel, err := t.teamRepo.GetVKCredsByTeamID(teamID)
 	if err != nil {
 		return nil, err
 	}
-	platforms.VKGroupID = groupID
+	platforms.VKGroupID = vkChannel.GroupID
 	return platforms, nil
 }
 
@@ -273,7 +273,12 @@ func (t *Team) SetVK(request *entity.SetVKRequest) error {
 	}
 
 	// Сохраняем данные в репозиторий
-	err = t.teamRepo.PutVKGroup(request.TeamID, request.GroupID, request.AdminApiKey, request.GroupApiKey)
+	err = t.teamRepo.PutVKGroup(&entity.VKChannel{
+		TeamID:      request.TeamID,
+		GroupID:     request.GroupID,
+		AdminAPIKey: request.AdminApiKey,
+		GroupAPIKey: request.GroupApiKey,
+	})
 	if err != nil {
 		return err
 	}

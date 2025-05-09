@@ -115,6 +115,8 @@ type PostPlatform struct {
 	PostUnionId int    `db:"post_union_id"`
 	PostId      int    `db:"post_id"`
 	Platform    string `db:"platform"`
+	TGChannelID *int   `db:"tg_channel_id"` // ID канала в телеге
+	VKChannelID *int   `db:"vk_channel_id"` // ID группы в ВК
 
 	TgPostPlatformGroup []TgPostPlatformGroup // Есть только у Platform = tg
 }

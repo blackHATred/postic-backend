@@ -358,7 +358,7 @@ func (p *PostDB) EditPostAction(postAction *entity.PostAction) error {
 func (p *PostDB) GetPostPlatform(postUnionID int, platform string) (*entity.PostPlatform, error) {
 	var postPlatform entity.PostPlatform
 	query := `
-		SELECT id, post_union_id, post_id, platform
+		SELECT id, post_union_id, post_id, platform, tg_channel_id, vk_channel_id
 		FROM post_platform
 		WHERE post_union_id = $1 AND platform = $2
 	`
@@ -385,14 +385,32 @@ func (p *PostDB) GetPostPlatform(postUnionID int, platform string) (*entity.Post
 	return &postPlatform, nil
 }
 
-func (p *PostDB) GetPostPlatformByPlatformPostID(platformID int, platform string) (*entity.PostPlatform, error) {
+func (p *PostDB) GetPostPlatformByPost(platformID int, channelID int, platform string) (*entity.PostPlatform, error) {
 	var postPlatform entity.PostPlatform
-	query := `
-		SELECT id, post_union_id, post_id, platform
-		FROM post_platform
-		WHERE post_id = $1 AND platform = $2
-	`
-	err := p.db.Get(&postPlatform, query, platformID, platform)
+	var query string
+	var err error
+
+	// Выбираем запрос в зависимости от платформы
+	switch platform {
+	case "tg":
+		query = `
+			SELECT id, post_union_id, post_id, platform, tg_channel_id
+			FROM post_platform
+			WHERE post_id = $1 AND tg_channel_id = $2 AND platform = $3
+		`
+		err = p.db.Get(&postPlatform, query, platformID, channelID, platform)
+	case "vk":
+		query = `
+			SELECT id, post_union_id, post_id, platform, vk_channel_id
+			FROM post_platform
+			WHERE post_id = $1 AND vk_channel_id = $2 AND platform = $3
+		`
+		err = p.db.Get(&postPlatform, query, platformID, channelID, platform)
+	default:
+		return nil, errors.New("unsupported platform")
+	}
+
+	// Обрабатываем ошибки
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, repo.ErrPostPlatformNotFound
@@ -419,13 +437,30 @@ func (p *PostDB) GetPostPlatformByPlatformPostID(platformID int, platform string
 }
 
 func (p *PostDB) AddPostPlatform(postPlatform *entity.PostPlatform) (int, error) {
-	query := `
-		INSERT INTO post_platform (post_union_id, post_id, platform)
-		VALUES ($1, $2, $3)
-		RETURNING id
-	`
+	var query string
 	var postPlatformID int
-	err := p.db.QueryRow(query, postPlatform.PostUnionId, postPlatform.PostId, postPlatform.Platform).Scan(&postPlatformID)
+	var err error
+
+	// Формируем запрос в зависимости от платформы
+	switch postPlatform.Platform {
+	case "tg":
+		query = `
+			INSERT INTO post_platform (post_union_id, post_id, platform, tg_channel_id)
+			VALUES ($1, $2, $3, $4)
+			RETURNING id
+		`
+		err = p.db.QueryRow(query, postPlatform.PostUnionId, postPlatform.PostId, postPlatform.Platform, postPlatform.TGChannelID).Scan(&postPlatformID)
+	case "vk":
+		query = `
+			INSERT INTO post_platform (post_union_id, post_id, platform, vk_channel_id)
+			VALUES ($1, $2, $3, $4)
+			RETURNING id
+		`
+		err = p.db.QueryRow(query, postPlatform.PostUnionId, postPlatform.PostId, postPlatform.Platform, postPlatform.VKChannelID).Scan(&postPlatformID)
+	default:
+		return 0, errors.New("unsupported platform")
+	}
+
 	if err != nil {
 		return 0, err
 	}

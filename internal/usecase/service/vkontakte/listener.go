@@ -126,7 +126,7 @@ func (e *EventListener) checkForUnwatchedGroups() {
 
 	for _, teamID := range teams {
 		// Получаем данные для подключения к VK API
-		groupID, adminApiKey, _, err := e.teamRepo.GetVKCredsByTeamID(teamID)
+		vkChannel, err := e.teamRepo.GetVKCredsByTeamID(teamID)
 		if err != nil {
 			log.Errorf("Failed to get VK credentials for team %d: %e", teamID, err)
 			continue
@@ -142,8 +142,8 @@ func (e *EventListener) checkForUnwatchedGroups() {
 		// Настраиваем лонгполл для команды, если его еще нет
 		e.mu.Lock()
 		if _, exists := e.lpClients[teamID]; !exists {
-			vk := api.NewVK(adminApiKey)
-			lp, err := longpoll.NewLongPoll(vk, groupID)
+			vk := api.NewVK(vkChannel.AdminAPIKey)
+			lp, err := longpoll.NewLongPoll(vk, vkChannel.GroupID)
 			if err != nil {
 				log.Errorf("Failed to create longpoll for team %d: %e", teamID, err)
 				e.mu.Unlock()
@@ -186,10 +186,10 @@ func (e *EventListener) setupLongPollHandlers(lp *longpoll.LongPoll, teamID int)
 		e.wallReplyRestoreHandler(ctx, object, teamID)
 	})
 	lp.LikeAdd(func(ctx context.Context, object events.LikeAddObject) {
-		e.likeAddHandler(ctx, object)
+		e.likeAddHandler(ctx, object, teamID)
 	})
 	lp.LikeRemove(func(ctx context.Context, object events.LikeRemoveObject) {
-		e.likeRemoveHandler(ctx, object)
+		e.likeRemoveHandler(ctx, object, teamID)
 	})
 }
 
@@ -216,7 +216,12 @@ func (e *EventListener) updateViewsCount(postID, ownerID, teamID int) {
 	}
 	views := post.Items[0].Views.Count
 	// Обновляем количество просмотров в нашей БД
-	postUnionID, err := e.postRepo.GetPostPlatformByPlatformPostID(postID, "vk")
+	vkChannel, err := e.teamRepo.GetVKCredsByTeamID(teamID)
+	if err != nil {
+		log.Errorf("Failed to get VK credentials: %v", err)
+		return
+	}
+	postUnionID, err := e.postRepo.GetPostPlatformByPost(postID, vkChannel.ID, "vk")
 	if err != nil {
 		log.Errorf("Failed to get post platform: %v", err)
 		return
@@ -229,7 +234,12 @@ func (e *EventListener) updateViewsCount(postID, ownerID, teamID int) {
 }
 
 func (e *EventListener) wallReplyNewHandler(ctx context.Context, obj events.WallReplyNewObject, teamID int) {
-	postPlatform, err := e.postRepo.GetPostPlatformByPlatformPostID(obj.PostID, "vk")
+	vkChannel, err := e.teamRepo.GetVKCredsByTeamID(teamID)
+	if err != nil {
+		log.Errorf("Failed to get VK credentials: %v", err)
+		return
+	}
+	postPlatform, err := e.postRepo.GetPostPlatformByPost(obj.PostID, vkChannel.ID, "vk")
 	if errors.Is(err, repo.ErrPostPlatformNotFound) {
 		return // Игнорируем комментарии к постам, которые мы не отслеживаем
 	}
@@ -403,7 +413,12 @@ func (e *EventListener) wallReplyRestoreHandler(ctx context.Context, obj events.
 	}
 
 	// Если комментарий не существует, то создаем новый
-	postPlatform, err := e.postRepo.GetPostPlatformByPlatformPostID(obj.PostID, "vk")
+	vkChannel, err := e.teamRepo.GetVKCredsByTeamID(teamID)
+	if err != nil {
+		log.Errorf("Failed to get VK credentials: %v", err)
+		return
+	}
+	postPlatform, err := e.postRepo.GetPostPlatformByPost(obj.PostID, vkChannel.ID, "vk")
 	if errors.Is(err, repo.ErrPostPlatformNotFound) {
 		return // Игнорим комментарии, которые мы не отслеживаем
 	}
@@ -453,12 +468,17 @@ func (e *EventListener) wallReplyRestoreHandler(ctx context.Context, obj events.
 	}
 }
 
-func (e *EventListener) likeAddHandler(ctx context.Context, obj events.LikeAddObject) {
+func (e *EventListener) likeAddHandler(ctx context.Context, obj events.LikeAddObject, teamID int) {
 	if obj.ObjectType != "post" {
 		return // Нам важны только лайки под постами
 	}
 
-	postPlatform, err := e.postRepo.GetPostPlatformByPlatformPostID(obj.ObjectID, "vk")
+	vkChannel, err := e.teamRepo.GetVKCredsByTeamID(teamID)
+	if err != nil {
+		log.Errorf("Failed to get VK credentials: %v", err)
+		return
+	}
+	postPlatform, err := e.postRepo.GetPostPlatformByPost(obj.ObjectID, vkChannel.ID, "vk")
 	if errors.Is(err, repo.ErrPostPlatformNotFound) {
 		return // Пост к нам не относится, пропускаем
 	}
@@ -473,12 +493,17 @@ func (e *EventListener) likeAddHandler(ctx context.Context, obj events.LikeAddOb
 	}
 }
 
-func (e *EventListener) likeRemoveHandler(ctx context.Context, obj events.LikeRemoveObject) {
+func (e *EventListener) likeRemoveHandler(ctx context.Context, obj events.LikeRemoveObject, teamID int) {
 	if obj.ObjectType != "post" {
 		return // Нас интересуют только лайки под постами
 	}
 
-	postPlatform, err := e.postRepo.GetPostPlatformByPlatformPostID(obj.ObjectID, "vk")
+	vkChannel, err := e.teamRepo.GetVKCredsByTeamID(teamID)
+	if err != nil {
+		log.Errorf("Failed to get VK credentials: %v", err)
+		return
+	}
+	postPlatform, err := e.postRepo.GetPostPlatformByPost(obj.ObjectID, vkChannel.ID, "vk")
 	if errors.Is(err, repo.ErrPostPlatformNotFound) {
 		return // Пост к нам не относится, пропускаем
 	}

@@ -117,7 +117,11 @@ CREATE TABLE IF NOT EXISTS post_platform (
     platform STRING(32) NOT NULL, -- vk / tg / etc
     post_union_id INT NOT NULL,
     FOREIGN KEY (post_union_id) REFERENCES post_union (id) ON DELETE CASCADE,
-    post_id INT NOT NULL
+    post_id INT NOT NULL,
+    tg_channel_id INT DEFAULT NULL, -- NULL, если пост не в телеге
+    FOREIGN KEY (tg_channel_id) REFERENCES channel_tg (id) ON DELETE CASCADE,
+    vk_channel_id INT DEFAULT NULL, -- NULL, если пост не в ВК
+    FOREIGN KEY (vk_channel_id) REFERENCES channel_vk (id) ON DELETE CASCADE
 );
 
 -- У telegram есть такая особенность, что группа медиавложений считается как несколько разных сообщений.

@@ -80,7 +80,7 @@ func main() {
 	}
 	telegramPostPlatformUseCase := telegram.NewTelegramPost(tgBot, postRepo, teamRepo, uploadRepo)
 	telegramCommentUseCase := telegram.NewTelegramComment(tgBot, commentRepo, teamRepo, uploadRepo)
-	telegramEventListener, err := telegram.NewTelegramEventListener(telegramBotToken, true, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo)
+	telegramEventListener, err := telegram.NewTelegramEventListener(telegramBotToken, false, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo)
 	if err != nil {
 		log.Fatalf("Ошибка при создании слушателя событий Post: %v", err)
 	}

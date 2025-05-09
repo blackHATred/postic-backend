@@ -39,9 +39,9 @@ type Team interface {
 	GetTGChannelByDiscussionId(discussionId int) (int, error)
 
 	// PutVKGroup привязывает группу к команде
-	PutVKGroup(teamId int, groupId int, adminApiKey string, groupApiKey string) error
+	PutVKGroup(vkChannel *entity.VKChannel) error
 	// GetVKCredsByTeamID возвращает ID группы и ключи доступа к ней по ID команды
-	GetVKCredsByTeamID(teamId int) (int, string, string, error)
+	GetVKCredsByTeamID(teamId int) (*entity.VKChannel, error)
 }
 
 const (
