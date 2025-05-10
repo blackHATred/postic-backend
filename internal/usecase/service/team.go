@@ -208,21 +208,24 @@ func (t *Team) Platforms(userID, teamID int) (*entity.TeamPlatforms, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !slices.Contains(roles, repo.AdminRole) {
+	if len(roles) == 0 {
+		// нет ролей - не может посмотреть привязанные платформы
 		return nil, usecase.ErrUserForbidden
 	}
 	// получаем платформы команды
 	platforms := &entity.TeamPlatforms{}
 	// telegram
 	tgChannel, err := t.teamRepo.GetTGChannelByTeamID(teamID)
-	if err != nil {
+	switch {
+	case errors.Is(err, repo.ErrTGChannelNotFound):
+		break
+	case err != nil:
 		return nil, err
 	}
 	platforms.TGChannelID = tgChannel.ChannelID
+	platforms.TGDiscussionID = 0
 	if tgChannel.DiscussionID != nil {
 		platforms.TGDiscussionID = *tgChannel.DiscussionID
-	} else {
-		platforms.TGDiscussionID = 0
 	}
 	// vkontakte
 	vkChannel, err := t.teamRepo.GetVKCredsByTeamID(teamID)
