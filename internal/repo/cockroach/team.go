@@ -199,7 +199,7 @@ func (t *Team) GetVKCredsByTeamID(teamId int) (*entity.VKChannel, error) {
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, repo.ErrTGChannelNotFound
+			return nil, repo.ErrVKChannelNotFound
 		}
 		return nil, err
 	}

@@ -54,4 +54,5 @@ const (
 var (
 	ErrTeamNotFound      = errors.New("team not found")
 	ErrTGChannelNotFound = errors.New("tg channel not found")
+	ErrVKChannelNotFound = errors.New("vk channel not found")
 )

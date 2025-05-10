@@ -229,7 +229,10 @@ func (t *Team) Platforms(userID, teamID int) (*entity.TeamPlatforms, error) {
 	}
 	// vkontakte
 	vkChannel, err := t.teamRepo.GetVKCredsByTeamID(teamID)
-	if err != nil {
+	switch {
+	case errors.Is(err, repo.ErrVKChannelNotFound):
+		break
+	case err != nil:
 		return nil, err
 	}
 	platforms.VKGroupID = vkChannel.GroupID
