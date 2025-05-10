@@ -72,11 +72,11 @@ func (p *Post) updatePostActionStatus(actionId int, status, errMsg string) {
 }
 
 func (p *Post) publishPost(request *entity.PostUnion, actionId int) {
-	var tgChannelId int
+	var tgChannel *entity.TGChannel
 	var err error
 	// получаем id канала
 	err = retry.Retry(func() error {
-		tgChannelId, _, err = p.teamRepo.GetTGChannelByTeamID(request.TeamID)
+		tgChannel, err = p.teamRepo.GetTGChannelByTeamID(request.TeamID)
 		if err != nil {
 			return err
 		}
@@ -86,30 +86,30 @@ func (p *Post) publishPost(request *entity.PostUnion, actionId int) {
 		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
-	if tgChannelId == 0 {
+	if tgChannel == nil {
 		p.updatePostActionStatus(actionId, "error", "channel not found")
 		return
 	}
 
 	if len(request.Attachments) == 0 {
-		p.handleNoAttachments(request, actionId, tgChannelId)
+		p.handleNoAttachments(request, actionId, tgChannel)
 	} else if len(request.Attachments) == 1 {
-		p.handleSingleAttachment(request, actionId, tgChannelId)
+		p.handleSingleAttachment(request, actionId, tgChannel)
 	} else if len(request.Attachments) > 1 && len(request.Attachments) < 11 {
-		p.handleMultipleAttachments(request, actionId, tgChannelId)
+		p.handleMultipleAttachments(request, actionId, tgChannel)
 	} else {
 		p.updatePostActionStatus(actionId, "error", "too many attachments")
 		return
 	}
 }
 
-func (p *Post) handleNoAttachments(request *entity.PostUnion, actionId, tgChannelId int) {
+func (p *Post) handleNoAttachments(request *entity.PostUnion, actionId int, tgChannel *entity.TGChannel) {
 	if request.Text == "" {
 		p.updatePostActionStatus(actionId, "error", "empty post")
 		return
 	}
 
-	newMsg := tgbotapi.NewMessage(int64(tgChannelId), request.Text)
+	newMsg := tgbotapi.NewMessage(int64(tgChannel.ChannelID), request.Text)
 	msg, err := p.bot.Send(newMsg)
 	if err != nil {
 		p.updatePostActionStatus(actionId, "error", err.Error())
@@ -121,7 +121,7 @@ func (p *Post) handleNoAttachments(request *entity.PostUnion, actionId, tgChanne
 			PostUnionId: request.ID,
 			PostId:      msg.MessageID,
 			Platform:    "tg",
-			TGChannelID: &tgChannelId,
+			TGChannelID: &tgChannel.ID,
 		})
 		return err
 	})
@@ -132,7 +132,7 @@ func (p *Post) handleNoAttachments(request *entity.PostUnion, actionId, tgChanne
 	p.updatePostActionStatus(actionId, "success", "")
 }
 
-func (p *Post) handleSingleAttachment(request *entity.PostUnion, actionId, tgChannelId int) {
+func (p *Post) handleSingleAttachment(request *entity.PostUnion, actionId int, tgChannel *entity.TGChannel) {
 	attachment := request.Attachments[0]
 	upload, err := p.uploadRepo.GetUpload(attachment.ID)
 	if err != nil {
@@ -142,13 +142,13 @@ func (p *Post) handleSingleAttachment(request *entity.PostUnion, actionId, tgCha
 
 	switch attachment.FileType {
 	case "photo":
-		p.sendPhoto(request, actionId, tgChannelId, upload)
+		p.sendPhoto(request, actionId, tgChannel, upload)
 	case "video":
-		p.sendVideo(request, actionId, tgChannelId, upload)
+		p.sendVideo(request, actionId, tgChannel, upload)
 	}
 }
 
-func (p *Post) handleMultipleAttachments(request *entity.PostUnion, actionId, tgChannelId int) {
+func (p *Post) handleMultipleAttachments(request *entity.PostUnion, actionId int, tgChannel *entity.TGChannel) {
 	var mediaGroup []any
 	for i, attachment := range request.Attachments {
 		upload, err := p.uploadRepo.GetUpload(attachment.ID)
@@ -182,7 +182,7 @@ func (p *Post) handleMultipleAttachments(request *entity.PostUnion, actionId, tg
 	}
 
 	if len(mediaGroup) > 0 {
-		mediaGroupMsg := tgbotapi.NewMediaGroup(int64(tgChannelId), mediaGroup)
+		mediaGroupMsg := tgbotapi.NewMediaGroup(int64(tgChannel.ChannelID), mediaGroup)
 		var messages []tgbotapi.Message
 		err := retry.Retry(func() error {
 			var err error
@@ -207,7 +207,7 @@ func (p *Post) handleMultipleAttachments(request *entity.PostUnion, actionId, tg
 					PostUnionId:         request.ID,
 					PostId:              messages[0].MessageID,
 					Platform:            "tg",
-					TGChannelID:         &tgChannelId,
+					TGChannelID:         &tgChannel.ID,
 					TgPostPlatformGroup: tgMediaGroupMessages,
 				})
 				return err
@@ -221,8 +221,8 @@ func (p *Post) handleMultipleAttachments(request *entity.PostUnion, actionId, tg
 	p.updatePostActionStatus(actionId, "success", "")
 }
 
-func (p *Post) sendPhoto(request *entity.PostUnion, actionId, tgChannelId int, upload *entity.Upload) {
-	req := tgbotapi.NewPhoto(int64(tgChannelId), tgbotapi.FileReader{
+func (p *Post) sendPhoto(request *entity.PostUnion, actionId int, tgChannel *entity.TGChannel, upload *entity.Upload) {
+	req := tgbotapi.NewPhoto(int64(tgChannel.ChannelID), tgbotapi.FileReader{
 		Name:   upload.FilePath,
 		Reader: upload.RawBytes,
 	})
@@ -238,7 +238,7 @@ func (p *Post) sendPhoto(request *entity.PostUnion, actionId, tgChannelId int, u
 			PostUnionId: request.ID,
 			PostId:      msg.MessageID,
 			Platform:    "tg",
-			TGChannelID: &tgChannelId,
+			TGChannelID: &tgChannel.ID,
 		})
 		return err
 	})
@@ -249,8 +249,8 @@ func (p *Post) sendPhoto(request *entity.PostUnion, actionId, tgChannelId int, u
 	p.updatePostActionStatus(actionId, "success", "")
 }
 
-func (p *Post) sendVideo(request *entity.PostUnion, actionId, tgChannelId int, upload *entity.Upload) {
-	req := tgbotapi.NewVideo(int64(tgChannelId), tgbotapi.FileReader{
+func (p *Post) sendVideo(request *entity.PostUnion, actionId int, tgChannel *entity.TGChannel, upload *entity.Upload) {
+	req := tgbotapi.NewVideo(int64(tgChannel.ChannelID), tgbotapi.FileReader{
 		Name:   upload.FilePath,
 		Reader: upload.RawBytes,
 	})
@@ -267,7 +267,7 @@ func (p *Post) sendVideo(request *entity.PostUnion, actionId, tgChannelId int, u
 			PostUnionId: request.ID,
 			PostId:      msg.MessageID,
 			Platform:    "tg",
-			TGChannelID: &tgChannelId,
+			TGChannelID: &tgChannel.ID,
 		})
 		return err
 	})
@@ -312,10 +312,10 @@ func (p *Post) EditPost(request *entity.EditPostRequest) (int, error) {
 		return 0, err
 	}
 
-	var tgChannelId int
+	var tgChannel *entity.TGChannel
 	err = retry.Retry(func() error {
 		var err error
-		tgChannelId, _, err = p.teamRepo.GetTGChannelByTeamID(post.TeamID)
+		tgChannel, err = p.teamRepo.GetTGChannelByTeamID(post.TeamID)
 		if err != nil {
 			return err
 		}
@@ -333,15 +333,15 @@ func (p *Post) EditPost(request *entity.EditPostRequest) (int, error) {
 	}
 
 	// Start asynchronous edit operation
-	go p.editPostAsync(post, postActionId, tgChannelId, postPlatform.PostId, request.Text)
+	go p.editPostAsync(post, postActionId, tgChannel, postPlatform.PostId, request.Text)
 
 	return postActionId, nil
 }
 
-func (p *Post) editPostAsync(post *entity.PostUnion, actionId, tgChannelId, messageId int, newText string) {
+func (p *Post) editPostAsync(post *entity.PostUnion, actionId int, tgChannel *entity.TGChannel, messageId int, newText string) {
 	// Если нет вложений, то просто обновляем текст
 	if len(post.Attachments) == 0 {
-		msg := tgbotapi.NewEditMessageText(int64(tgChannelId), messageId, newText)
+		msg := tgbotapi.NewEditMessageText(int64(tgChannel.ChannelID), messageId, newText)
 		_, err := p.bot.Send(msg)
 		if err != nil {
 			p.updatePostActionStatus(actionId, "error", err.Error())
@@ -349,7 +349,7 @@ func (p *Post) editPostAsync(post *entity.PostUnion, actionId, tgChannelId, mess
 		}
 	} else {
 		// Для постов с аттачами редактируем описание первого аттача
-		editMsg := tgbotapi.NewEditMessageCaption(int64(tgChannelId), messageId, newText)
+		editMsg := tgbotapi.NewEditMessageCaption(int64(tgChannel.ChannelID), messageId, newText)
 		_, err := p.bot.Send(editMsg)
 		if err != nil {
 			p.updatePostActionStatus(actionId, "error", err.Error())
@@ -383,10 +383,10 @@ func (p *Post) DeletePost(request *entity.DeletePostRequest) (int, error) {
 		return 0, err
 	}
 
-	var tgChannelId int
+	var tgChannel *entity.TGChannel
 	err = retry.Retry(func() error {
 		var err error
-		tgChannelId, _, err = p.teamRepo.GetTGChannelByTeamID(post.TeamID)
+		tgChannel, err = p.teamRepo.GetTGChannelByTeamID(post.TeamID)
 		if err != nil {
 			return err
 		}
@@ -397,12 +397,12 @@ func (p *Post) DeletePost(request *entity.DeletePostRequest) (int, error) {
 		return 0, err
 	}
 
-	go p.deletePostAsync(post, postActionId, tgChannelId)
+	go p.deletePostAsync(post, postActionId, tgChannel)
 
 	return postActionId, nil
 }
 
-func (p *Post) deletePostAsync(post *entity.PostUnion, actionId, tgChannelId int) {
+func (p *Post) deletePostAsync(post *entity.PostUnion, actionId int, tgChannel *entity.TGChannel) {
 	// Получаем ID поста в телеграме
 	postPlatform, err := p.postRepo.GetPostPlatform(post.ID, "tg")
 	if err != nil {
@@ -421,7 +421,7 @@ func (p *Post) deletePostAsync(post *entity.PostUnion, actionId, tgChannelId int
 			}
 		}
 	}
-	msg := tgbotapi.NewDeleteMessage(int64(tgChannelId), postPlatform.PostId)
+	msg := tgbotapi.NewDeleteMessage(int64(tgChannel.ChannelID), postPlatform.PostId)
 	_, err = p.bot.Send(msg)
 	if err != nil {
 		p.updatePostActionStatus(actionId, "error", err.Error())

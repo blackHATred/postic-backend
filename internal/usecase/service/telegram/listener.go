@@ -132,14 +132,14 @@ func (t *EventListener) StopListener() {
 }
 
 func (t *EventListener) UpdateStats(update *models.Update) {
-	tgChannelID, err := t.teamRepo.GetTGChannelByDiscussionId(int(update.MessageReactionCount.Chat.ID))
+	tgChannel, err := t.teamRepo.GetTGChannelByDiscussionId(int(update.MessageReactionCount.Chat.ID))
 	if errors.Is(err, repo.ErrTGChannelNotFound) {
 		log.Debugf("Channel not found for discussion ID: %d", update.MessageReactionCount.Chat.ID)
 		return
 	}
 	post, err := t.postRepo.GetPostPlatformByPost(
 		update.MessageReactionCount.MessageID,
-		tgChannelID,
+		tgChannel.ID,
 		"tg",
 	)
 	switch {
@@ -433,7 +433,7 @@ func (t *EventListener) handleCommand(update *models.Update) error {
 			"/help - Показать список команд\n" +
 			"/add_channel - Добавить канал. Если канал уже привязан, то вызов этой команды обновит его настройки"
 	case "add_channel":
-		cmdArgs := strings.Split(args, " ")
+		cmdArgs := strings.Fields(args)
 		if len(cmdArgs) > 3 || len(cmdArgs) < 2 {
 			params.Text = "❌ Неверное количество параметров. Используйте: " +
 				"/add_channel <ключ пользователя> <ID канала> <ID обсуждений (при наличии)>.\n" +
@@ -452,10 +452,10 @@ func (t *EventListener) handleCommand(update *models.Update) error {
 			return err
 		}
 
-		var discussionID int64
+		var discussionIDParsed int64
 		if len(cmdArgs) > 2 {
-			discussionID, err = strconv.ParseInt(cmdArgs[2], 10, 64)
-			if err != nil || discussionID >= 0 {
+			discussionIDParsed, err = strconv.ParseInt(cmdArgs[2], 10, 64)
+			if err != nil || discussionIDParsed >= 0 {
 				params.Text = "Неверный формат discussion_id. Используйте целое отрицательное число."
 				_, err := t.bot.SendMessage(t.ctx, params)
 				return err
@@ -468,7 +468,12 @@ func (t *EventListener) handleCommand(update *models.Update) error {
 			_, err := t.bot.SendMessage(t.ctx, params)
 			return err
 		}
-		err = t.teamRepo.PutTGChannel(teamId, int(channelID), int(discussionID))
+		discussionIDint := int(discussionIDParsed)
+		err = t.teamRepo.PutTGChannel(&entity.TGChannel{
+			TeamID:       teamId,
+			ChannelID:    int(channelID),
+			DiscussionID: &discussionIDint,
+		})
 		if err != nil {
 			params.Text = "Не удалось добавить канал. Обратитесь в поддержку для решения вопроса."
 			_, err := t.bot.SendMessage(t.ctx, params)
@@ -497,7 +502,7 @@ func (t *EventListener) handleComment(update *models.Update) error {
 	} else {
 		return nil
 	}
-	tgChannelID, err := t.teamRepo.GetTGChannelByDiscussionId(discussionID)
+	tgChannel, err := t.teamRepo.GetTGChannelByDiscussionId(discussionID)
 	if errors.Is(err, repo.ErrTGChannelNotFound) {
 		return nil
 	}
@@ -515,9 +520,11 @@ func (t *EventListener) handleComment(update *models.Update) error {
 
 			postTg, err = t.postRepo.GetPostPlatformByPost(
 				update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel.MessageID,
-				tgChannelID,
+				tgChannel.ID,
 				"tg",
 			)
+
+			log.Infof("Blabla %v", postTg)
 
 			if errors.Is(err, repo.ErrPostPlatformNotFound) {
 				// Если это не пост, то возможно это ответ на комментарий

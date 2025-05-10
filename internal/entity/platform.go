@@ -12,8 +12,8 @@ type VKChannel struct {
 }
 
 type TGChannel struct {
-	ID           int `db:"id"`
-	UserID       int `db:"user_id"`
-	ChannelID    int `db:"channel_id"`
-	DiscussionID int `db:"discussion_id"`
+	ID           int  `db:"id"`
+	TeamID       int  `db:"team_id"`
+	ChannelID    int  `db:"channel_id"`
+	DiscussionID *int `db:"discussion_id"`
 }

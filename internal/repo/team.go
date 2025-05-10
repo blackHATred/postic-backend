@@ -31,12 +31,12 @@ type Team interface {
 	// DeleteTeamUserRoles удаляет все роли пользователя в команде, по сути исключая его из команды
 	DeleteTeamUserRoles(teamId int, userId int) error
 
-	// GetTGChannelByTeamID возвращает ID телеграм канала и ID обсуждений (если их нет, то 0) по ID команды
-	GetTGChannelByTeamID(teamId int) (int, int, error)
+	// GetTGChannelByTeamID возвращает телеграм канал по ID команды
+	GetTGChannelByTeamID(teamId int) (*entity.TGChannel, error)
 	// PutTGChannel привязывает ID телеграм канала и ID обсуждения к команде
-	PutTGChannel(teamId int, channelId int, discussionId int) error
-	// GetTGChannelByDiscussionId возвращает ID телеграм канала (в нашей системе, а не реальный) по ID обсуждения
-	GetTGChannelByDiscussionId(discussionId int) (int, error)
+	PutTGChannel(tgChannel *entity.TGChannel) error
+	// GetTGChannelByDiscussionId возвращает телеграм канал по ID обсуждения
+	GetTGChannelByDiscussionId(discussionId int) (*entity.TGChannel, error)
 
 	// PutVKGroup привязывает группу к команде
 	PutVKGroup(vkChannel *entity.VKChannel) error

@@ -50,11 +50,11 @@ func (t *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 
 	// Получаем информацию о канале дискуссий
 	teamID := request.TeamID
-	_, discussionID, err := t.teamRepo.GetTGChannelByTeamID(teamID)
+	tgChannel, err := t.teamRepo.GetTGChannelByTeamID(teamID)
 	if err != nil {
 		return 0, err
 	}
-	if discussionID == 0 {
+	if tgChannel.DiscussionID == nil || *tgChannel.DiscussionID == 0 {
 		return 0, usecase.ErrReplyCommentUnavailable
 	}
 
@@ -66,7 +66,7 @@ func (t *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 
 	// Переменная для хранения отправленного сообщения
 	var sentMsg tgbotapi.Message
-	chatID := int64(discussionID)
+	chatID := int64(*tgChannel.DiscussionID)
 
 	// Проверяем наличие вложений
 	if len(request.Attachments) > 0 {
@@ -166,7 +166,7 @@ func (t *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 		}
 
 		// Удаляем только что отправленное сообщение
-		deleteMsg := tgbotapi.NewDeleteMessage(int64(discussionID), sentMsg.MessageID)
+		deleteMsg := tgbotapi.NewDeleteMessage(int64(*tgChannel.DiscussionID), sentMsg.MessageID)
 		err = retry.Retry(func() error {
 			_, err := t.bot.Request(deleteMsg)
 			return err
@@ -227,13 +227,16 @@ func (t *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 	}
 
 	// Получаем информацию о канале дискуссий
-	_, discussionID, err := t.teamRepo.GetTGChannelByTeamID(request.TeamID)
+	tgChannel, err := t.teamRepo.GetTGChannelByTeamID(request.TeamID)
 	if err != nil {
 		return err
 	}
 
+	if tgChannel.DiscussionID == nil || *tgChannel.DiscussionID == 0 {
+		return nil
+	}
 	// Создаем запрос на удаление сообщения
-	deleteMsg := tgbotapi.NewDeleteMessage(int64(discussionID), comment.CommentPlatformID)
+	deleteMsg := tgbotapi.NewDeleteMessage(int64(*tgChannel.DiscussionID), comment.CommentPlatformID)
 
 	// Пробуем удалить сообщение с повторами в случае ошибки
 	err = retry.Retry(func() error {
@@ -256,7 +259,7 @@ func (t *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 		// Создаем запрос на бан пользователя
 		banConfig := tgbotapi.BanChatMemberConfig{
 			ChatMemberConfig: tgbotapi.ChatMemberConfig{
-				ChatID: int64(discussionID),
+				ChatID: int64(*tgChannel.DiscussionID),
 				UserID: int64(request.UserID),
 			},
 			UntilDate:      0, // 0 означает бан навсегда
@@ -271,12 +274,12 @@ func (t *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 		if err != nil {
 			log.Errorf("Не удалось забанить пользователя в Post: %v", err)
 		} else {
-			log.Infof("Пользователь с ID %d успешно забанен в канале %d", comment.UserPlatformID, discussionID)
+			log.Infof("Пользователь с ID %d успешно забанен в канале %d", comment.UserPlatformID, *tgChannel.DiscussionID)
 		}
 	}
 
 	// уведомляем подписчиков об удалении комментария
-	err = t.notifySubscribers(request.PostCommentID, 0, discussionID, "deleted")
+	err = t.notifySubscribers(request.PostCommentID, 0, *tgChannel.DiscussionID, "deleted")
 	if err != nil {
 		log.Errorf("Failed to notify subscribers about deleted comment: %v", err)
 	}

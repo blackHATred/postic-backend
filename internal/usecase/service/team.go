@@ -214,12 +214,16 @@ func (t *Team) Platforms(userID, teamID int) (*entity.TeamPlatforms, error) {
 	// получаем платформы команды
 	platforms := &entity.TeamPlatforms{}
 	// telegram
-	channelID, discussionID, err := t.teamRepo.GetTGChannelByTeamID(teamID)
+	tgChannel, err := t.teamRepo.GetTGChannelByTeamID(teamID)
 	if err != nil {
 		return nil, err
 	}
-	platforms.TGChannelID = channelID
-	platforms.TGDiscussionID = discussionID
+	platforms.TGChannelID = tgChannel.ChannelID
+	if tgChannel.DiscussionID != nil {
+		platforms.TGDiscussionID = *tgChannel.DiscussionID
+	} else {
+		platforms.TGDiscussionID = 0
+	}
 	// vkontakte
 	vkChannel, err := t.teamRepo.GetVKCredsByTeamID(teamID)
 	if err != nil {
