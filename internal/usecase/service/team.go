@@ -221,12 +221,14 @@ func (t *Team) Platforms(userID, teamID int) (*entity.TeamPlatforms, error) {
 		break
 	case err != nil:
 		return nil, err
+	default:
+		platforms.TGChannelID = tgChannel.ChannelID
+		platforms.TGDiscussionID = 0
+		if tgChannel.DiscussionID != nil {
+			platforms.TGDiscussionID = *tgChannel.DiscussionID
+		}
 	}
-	platforms.TGChannelID = tgChannel.ChannelID
-	platforms.TGDiscussionID = 0
-	if tgChannel.DiscussionID != nil {
-		platforms.TGDiscussionID = *tgChannel.DiscussionID
-	}
+
 	// vkontakte
 	vkChannel, err := t.teamRepo.GetVKCredsByTeamID(teamID)
 	switch {
@@ -234,8 +236,9 @@ func (t *Team) Platforms(userID, teamID int) (*entity.TeamPlatforms, error) {
 		break
 	case err != nil:
 		return nil, err
+	default:
+		platforms.VKGroupID = vkChannel.GroupID
 	}
-	platforms.VKGroupID = vkChannel.GroupID
 	return platforms, nil
 }
 
