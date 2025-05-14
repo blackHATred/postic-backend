@@ -30,7 +30,6 @@ type EventListener struct {
 	postRepo              repo.Post
 	uploadRepo            repo.Upload
 	commentRepo           repo.Comment
-	analyticsRepo         repo.Analytics
 	subscribers           map[entity.Subscriber]chan *entity.CommentEvent
 	mu                    sync.Mutex
 	lpClients             map[int]*longpoll.LongPoll
@@ -45,7 +44,6 @@ func NewVKEventListener(
 	postRepo repo.Post,
 	uploadRepo repo.Upload,
 	commentRepo repo.Comment,
-	analyticsRepo repo.Analytics,
 ) usecase.Listener {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &EventListener{
@@ -56,7 +54,6 @@ func NewVKEventListener(
 		postRepo:              postRepo,
 		uploadRepo:            uploadRepo,
 		commentRepo:           commentRepo,
-		analyticsRepo:         analyticsRepo,
 		subscribers:           make(map[entity.Subscriber]chan *entity.CommentEvent),
 		lpClients:             make(map[int]*longpoll.LongPoll),
 		vkClients:             make(map[int]*api.VK),
@@ -173,8 +170,6 @@ func (e *EventListener) checkForUnwatchedGroups() {
 func (e *EventListener) setupLongPollHandlers(lp *longpoll.LongPoll, teamID int) {
 	lp.WallReplyNew(func(ctx context.Context, object events.WallReplyNewObject) {
 		e.wallReplyNewHandler(ctx, object, teamID)
-		// Заодно обновляем количество просмотров поста
-		// e.updateViewsCount(object.PostID, object.PostOwnerID, teamID)
 	})
 	lp.WallReplyDelete(func(ctx context.Context, object events.WallReplyDeleteObject) {
 		e.wallReplyDeleteHandler(ctx, object, teamID)
@@ -185,52 +180,15 @@ func (e *EventListener) setupLongPollHandlers(lp *longpoll.LongPoll, teamID int)
 	lp.WallReplyRestore(func(ctx context.Context, object events.WallReplyRestoreObject) {
 		e.wallReplyRestoreHandler(ctx, object, teamID)
 	})
-	lp.LikeAdd(func(ctx context.Context, object events.LikeAddObject) {
-		e.likeAddHandler(ctx, object, teamID)
-	})
-	lp.LikeRemove(func(ctx context.Context, object events.LikeRemoveObject) {
-		e.likeRemoveHandler(ctx, object, teamID)
-	})
-}
-
-func (e *EventListener) updateViewsCount(postID, ownerID, teamID int) {
-	// Получаем количество просмотров поста по API вк
-	e.mu.Lock()
-	vk, ok := e.vkClients[teamID]
-	e.mu.Unlock()
-	if !ok {
-		log.Errorf("VK client not found for team ID %d", teamID)
-		return
-	}
-	params := api.Params{
-		"posts": fmt.Sprintf("%d_%d", ownerID, postID),
-	}
-	post, err := vk.WallGetByID(params)
-	if err != nil {
-		log.Errorf("Failed to get post by ID: %v", err)
-		return
-	}
-	if len(post.Items) == 0 {
-		log.Errorf("Post not found: %d", postID)
-		return
-	}
-	views := post.Items[0].Views.Count
-	// Обновляем количество просмотров в нашей БД
-	vkChannel, err := e.teamRepo.GetVKCredsByTeamID(teamID)
-	if err != nil {
-		log.Errorf("Failed to get VK credentials: %v", err)
-		return
-	}
-	postUnionID, err := e.postRepo.GetPostPlatformByPost(postID, vkChannel.ID, "vk")
-	if err != nil {
-		log.Errorf("Failed to get post platform: %v", err)
-		return
-	}
-	err = e.analyticsRepo.SetPostViewsCount(postUnionID.ID, "vk", views)
-	if err != nil {
-		log.Errorf("Failed to update views count: %v", err)
-		return
-	}
+	/*
+		DEPRECATED
+		lp.LikeAdd(func(ctx context.Context, object events.LikeAddObject) {
+			e.likeAddHandler(ctx, object, teamID)
+		})
+		lp.LikeRemove(func(ctx context.Context, object events.LikeRemoveObject) {
+			e.likeRemoveHandler(ctx, object, teamID)
+		})
+	*/
 }
 
 func (e *EventListener) wallReplyNewHandler(ctx context.Context, obj events.WallReplyNewObject, teamID int) {
@@ -466,92 +424,6 @@ func (e *EventListener) wallReplyRestoreHandler(ctx context.Context, obj events.
 	if err != nil {
 		log.Errorf("Failed to notify subscribers: %v", err)
 	}
-}
-
-func (e *EventListener) likeAddHandler(ctx context.Context, obj events.LikeAddObject, teamID int) {
-	if obj.ObjectType != "post" {
-		return // Нам важны только лайки под постами
-	}
-
-	vkChannel, err := e.teamRepo.GetVKCredsByTeamID(teamID)
-	if err != nil {
-		log.Errorf("Failed to get VK credentials: %v", err)
-		return
-	}
-	postPlatform, err := e.postRepo.GetPostPlatformByPost(obj.ObjectID, vkChannel.ID, "vk")
-	if errors.Is(err, repo.ErrPostPlatformNotFound) {
-		return // Пост к нам не относится, пропускаем
-	}
-	if err != nil {
-		log.Errorf("Failed to get post platform: %v", err)
-		return
-	}
-
-	err = e.updateLikeStats(postPlatform.PostUnionId, 1)
-	if err != nil {
-		return // Ошибка при обновлении статистики, игнорируем
-	}
-}
-
-func (e *EventListener) likeRemoveHandler(ctx context.Context, obj events.LikeRemoveObject, teamID int) {
-	if obj.ObjectType != "post" {
-		return // Нас интересуют только лайки под постами
-	}
-
-	vkChannel, err := e.teamRepo.GetVKCredsByTeamID(teamID)
-	if err != nil {
-		log.Errorf("Failed to get VK credentials: %v", err)
-		return
-	}
-	postPlatform, err := e.postRepo.GetPostPlatformByPost(obj.ObjectID, vkChannel.ID, "vk")
-	if errors.Is(err, repo.ErrPostPlatformNotFound) {
-		return // Пост к нам не относится, пропускаем
-	}
-	if err != nil {
-		log.Errorf("Failed to get post platform: %v", err)
-		return
-	}
-
-	// Update post stats
-	err = e.updateLikeStats(postPlatform.PostUnionId, -1)
-	if err != nil {
-		return // Ошибка при обновлении статистики, игнорируем
-	}
-}
-
-func (e *EventListener) updateLikeStats(postID int, deltaLikeCount int) error {
-	// Получаем статистику по посту
-	stats, err := e.analyticsRepo.GetPostPlatformStatsByPostUnionID(postID, "vk")
-	if errors.Is(err, repo.ErrPostPlatformStatsNotFound) {
-		// If stats do not exist, create a new entry
-		postUnion, err := e.postRepo.GetPostUnion(postID)
-		if err != nil {
-			return fmt.Errorf("failed to get post union: %w", err)
-		}
-
-		newStats := &entity.PostPlatformStats{
-			TeamID:      postUnion.TeamID,
-			PostUnionID: postUnion.ID,
-			Platform:    "vk",
-			Views:       0,
-			Comments:    0,
-			LastUpdate:  time.Now(),
-		}
-		if deltaLikeCount > 0 {
-			newStats.Reactions = deltaLikeCount
-		} else {
-			newStats.Reactions = 0
-		}
-
-		return e.analyticsRepo.AddPostPlatformStats(newStats)
-	} else if err != nil {
-		return fmt.Errorf("failed to get post platform stats: %w", err)
-	}
-
-	// обновляем статистику по лайкам
-	stats.Reactions = stats.Reactions + deltaLikeCount
-
-	return e.analyticsRepo.EditPostPlatformStats(stats)
 }
 
 type UserInfo struct {

@@ -237,11 +237,9 @@ func (c *Comment) GetComments(
 	offset time.Time,
 	before bool,
 	limit int,
-	markedAsTicket *bool,
 ) ([]*entity.Comment, error) {
 	var comparator string
 	var sortOrder string
-	markedAsTicketCondition := ""
 
 	if before {
 		// Получить комментарии ДО offset
@@ -251,13 +249,6 @@ func (c *Comment) GetComments(
 		// Получить комментарии ПОСЛЕ offset
 		comparator = ">"
 		sortOrder = "ASC" // Сначала более старые
-	}
-	if markedAsTicket != nil {
-		if *markedAsTicket {
-			markedAsTicketCondition = "AND marked_as_ticket = true"
-		} else {
-			markedAsTicketCondition = "AND marked_as_ticket = false"
-		}
 	}
 
 	/*
@@ -290,7 +281,6 @@ WITH RECURSIVE top_level_comments AS (
 	  AND ($2 = 0 OR "post_union_id" = $2)
       AND reply_to_comment_id = 0
       AND created_at %s $3
-      %s
     ORDER BY created_at %s
     LIMIT $4
 ),
@@ -352,7 +342,7 @@ SELECT
 	marked_as_ticket
 FROM comment_tree
 ORDER BY CASE WHEN reply_to_comment_id = 0 THEN 0 ELSE 1 END, created_at DESC
-`, comparator, markedAsTicketCondition, sortOrder)
+`, comparator, sortOrder)
 
 	rows, err := c.db.Queryx(query, teamID, postUnionID, offset, limit)
 	if err != nil {
@@ -406,6 +396,108 @@ ORDER BY CASE WHEN reply_to_comment_id = 0 THEN 0 ELSE 1 END, created_at DESC
    JOIN mediafile m ON pca.mediafile_id = m.id
    WHERE pca.comment_id = $1
   `, comment.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		comment.Attachments = make([]*entity.Upload, 0)
+		for attachmentsRows.Next() {
+			upload := &entity.Upload{}
+			if err := attachmentsRows.StructScan(upload); err != nil {
+				_ = attachmentsRows.Close()
+				return nil, err
+			}
+			comment.Attachments = append(comment.Attachments, upload)
+		}
+		_ = attachmentsRows.Close()
+
+		comments = append(comments, &comment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return comments, nil
+}
+
+func (c *Comment) GetTicketComments(teamID int, offset time.Time, before bool, limit int) ([]*entity.Comment, error) {
+	var comparator string
+	var sortOrder string
+
+	if before {
+		// Получить комментарии ДО offset
+		comparator = "<"
+		sortOrder = "DESC" // Сначала новые
+	} else {
+		// Получить комментарии ПОСЛЕ offset
+		comparator = ">"
+		sortOrder = "ASC" // Сначала более старые
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, team_id, post_union_id, platform, post_platform_id, user_platform_id, comment_platform_id,
+		       full_name, username, avatar_mediafile_id, text, reply_to_comment_id, is_team_reply, created_at,
+		       marked_as_ticket
+		FROM post_comment
+		WHERE team_id = $1
+		  AND created_at %s $2
+		  AND marked_as_ticket = TRUE
+		ORDER BY created_at %s
+		LIMIT $3
+	`, comparator, sortOrder)
+
+	rows, err := c.db.Queryx(query, teamID, offset, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var comments []*entity.Comment
+	for rows.Next() {
+		var comment entity.Comment
+		var avatarMediafileID *int
+
+		if err := rows.Scan(
+			&comment.ID,
+			&comment.TeamID,
+			&comment.PostUnionID,
+			&comment.Platform,
+			&comment.PostPlatformID,
+			&comment.UserPlatformID,
+			&comment.CommentPlatformID,
+			&comment.FullName,
+			&comment.Username,
+			&avatarMediafileID,
+			&comment.Text,
+			&comment.ReplyToCommentID,
+			&comment.IsTeamReply,
+			&comment.CreatedAt,
+			&comment.MarkedAsTicket,
+		); err != nil {
+			return nil, err
+		}
+
+		// Загружаем аватар, если он есть
+		if avatarMediafileID != nil {
+			avatarRow := c.db.QueryRowx(`
+				SELECT id, file_path, file_type, uploaded_by_user_id, created_at
+				FROM mediafile
+				WHERE id = $1
+			`, *avatarMediafileID)
+
+			comment.AvatarMediaFile = &entity.Upload{}
+			if err := avatarRow.StructScan(comment.AvatarMediaFile); err != nil {
+				return nil, err
+			}
+		}
+
+		// Загружаем вложения комментария
+		attachmentsRows, err := c.db.Queryx(`
+			SELECT m.id, m.file_path, m.file_type, m.uploaded_by_user_id, m.created_at
+			FROM post_comment_attachment pca
+			JOIN mediafile m ON pca.mediafile_id = m.id
+			WHERE pca.comment_id = $1
+		`, comment.ID)
 		if err != nil {
 			return nil, err
 		}

@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"github.com/labstack/gommon/log"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
@@ -35,62 +36,49 @@ func NewAnalytics(
 	}
 }
 
-func (a *Analytics) UpdatePostStats(request *entity.UpdatePostStatsRequest) error {
-	// Проверяем права пользователя
-	roles, err := a.teamRepo.GetTeamUserRoles(request.TeamID, request.UserID)
-	if err != nil {
-		return err
-	}
-	if !slices.Contains(roles, repo.AdminRole) && !slices.Contains(roles, repo.AnalyticsRole) {
-		return usecase.ErrUserForbidden
-	}
-	postUnion, err := a.postRepo.GetPostUnion(request.PostUnionID)
-	if err != nil {
-		return err
-	}
-	// Проверяем, когда было последнее обновление по каждой из платформ. Если прошло меньше 5 минут, то не обновляем
-	for _, platform := range postUnion.Platforms {
-		stats, err := a.analyticsRepo.GetPostPlatformStatsByPostUnionID(request.PostUnionID, platform)
-		switch {
-		case errors.Is(err, repo.ErrPostPlatformStatsNotFound):
-			// Если статистики нет, то добавляем новую
-			stats = &entity.PostPlatformStats{
-				TeamID:      request.TeamID,
-				PostUnionID: request.PostUnionID,
-				Platform:    platform,
-				Views:       0,
-				Reactions:   0,
-				Comments:    0,
-				LastUpdate:  time.Now(),
-			}
-			err = a.analyticsRepo.AddPostPlatformStats(stats)
-			if err != nil {
-				return err
-			}
-		case err != nil:
-			return err
+// beginNewPeriod создает новый период для аналитики, если необходимо
+func (a *Analytics) beginNewPeriod(postUnionID int, platform string) {
+	// Получаем дату последнего обновления аналитики
+	stats, err := a.analyticsRepo.GetPostPlatformStatsByPostUnionID(postUnionID, platform)
+	if errors.Is(err, repo.ErrPostPlatformStatsNotFound) {
+		// Если статистики пока не существует, то создаём новый период
+		err = a.analyticsRepo.CreateNewPeriod(postUnionID, platform)
+		if err != nil {
+			log.Errorf("Error creating new period: %v", err)
+			return
 		}
-		if stats.LastUpdate.Add(5 * time.Minute).After(time.Now()) {
-			continue
+		return
+	}
+	if err != nil {
+		log.Errorf("Error getting last update date: %v", err)
+		return
+	}
+
+	currentDate := time.Now()
+	// Если время последнего отсчёта больше 5 минут назад, создаем новый период
+	if currentDate.Sub(stats.PeriodStart) > 5*time.Minute {
+		err = a.analyticsRepo.CreateNewPeriod(postUnionID, platform)
+		if err != nil {
+			log.Errorf("Error creating new period: %v", err)
+			return
+		}
+		err = a.analyticsRepo.EndPeriod(postUnionID, platform)
+		if err != nil {
+			log.Errorf("Error ending period: %v", err)
+			return
 		}
 		// Обновляем статистику по платформе
 		switch platform {
 		case "tg":
-			// Обновляем статистику по платформе Telegram
-			_, err := a.telegramAnalytics.UpdateStat(request.PostUnionID)
-			if err != nil {
-				return err
-			}
+			err = a.telegramAnalytics.UpdateStat(postUnionID)
 		case "vk":
-			// Обновляем статистику по платформе ВКонтакте
-			_, err := a.vkontakteAnalytics.UpdateStat(request.PostUnionID)
-			if err != nil {
-				return err
-			}
+			err = a.vkontakteAnalytics.UpdateStat(postUnionID)
 		}
-		return nil
+		if err != nil {
+			log.Errorf("Error updating stats: %v", err)
+			return
+		}
 	}
-	return nil
 }
 
 func (a *Analytics) GetStats(request *entity.GetStatsRequest) (*entity.StatsResponse, error) {
@@ -103,36 +91,28 @@ func (a *Analytics) GetStats(request *entity.GetStatsRequest) (*entity.StatsResp
 		return nil, usecase.ErrUserForbidden
 	}
 
-	tgStats, err := a.analyticsRepo.GetPostPlatformStatsByPeriod(request.Start, request.End, "tg")
-	if err != nil {
-		return nil, err
-	}
-	vkStats, err := a.analyticsRepo.GetPostPlatformStatsByPeriod(request.Start, request.End, "vk")
-	if err != nil {
-		return nil, err
+	platforms := []string{"tg", "vk"}
+	allStats := make([]*entity.PostPlatformStats, 0)
+	for _, platform := range platforms {
+		stats, err := a.analyticsRepo.GetPostPlatformStatsByPeriod(request.Start, request.End, platform)
+		if err != nil {
+			return nil, err
+		}
+		allStats = append(allStats, stats...)
 	}
 
 	// составляем ответ
-	posts := make([]*entity.PostStats, 0)
-	for _, post := range tgStats {
-		posts = append(posts, &entity.PostStats{
-			PostUnionID: post.PostUnionID,
+	posts := make([]*entity.PostStats, len(allStats))
+	for i, postPlatformStats := range allStats {
+		go a.beginNewPeriod(postPlatformStats.PostUnionID, postPlatformStats.Platform)
+		posts[i] = &entity.PostStats{
+			PostUnionID: postPlatformStats.PostUnionID,
 			Telegram: &entity.PlatformStats{
-				Views:     post.Views,
-				Comments:  post.Comments,
-				Reactions: post.Reactions,
+				Views:     postPlatformStats.Views,
+				Comments:  postPlatformStats.Comments,
+				Reactions: postPlatformStats.Reactions,
 			},
-		})
-	}
-	for _, post := range vkStats {
-		posts = append(posts, &entity.PostStats{
-			PostUnionID: post.PostUnionID,
-			Vkontakte: &entity.PlatformStats{
-				Views:     post.Views,
-				Comments:  post.Comments,
-				Reactions: post.Reactions,
-			},
-		})
+		}
 	}
 	return &entity.StatsResponse{
 		Posts: posts,
@@ -154,48 +134,28 @@ func (a *Analytics) GetPostUnionStats(request *entity.GetPostUnionStatsRequest) 
 		return nil, err
 	}
 
-	var allStats []*entity.PostPlatformStats
+	allStats := make([]*entity.PostPlatformStats, len(postUnion.Platforms))
 
-	for _, platform := range postUnion.Platforms {
-		switch platform {
-		case "tg":
-			tgStats, err := a.analyticsRepo.GetPostPlatformStatsByPostUnionID(request.PostUnionID, "tg")
-			if errors.Is(err, repo.ErrPostPlatformStatsNotFound) {
-				// If no stats exist, create new ones
-				tgStats = &entity.PostPlatformStats{
-					TeamID:      request.TeamID,
-					PostUnionID: request.PostUnionID,
-					Platform:    "tg",
-					Views:       0,
-					Reactions:   0,
-					Comments:    0,
-					LastUpdate:  time.Now(),
-				}
-			} else if err != nil {
-				return nil, fmt.Errorf("failed to get TG stats: %w", err)
+	for i, platform := range postUnion.Platforms {
+		stats, err := a.analyticsRepo.GetPostPlatformStatsByPostUnionID(request.PostUnionID, platform)
+		if errors.Is(err, repo.ErrPostPlatformStatsNotFound) {
+			// Если статистики пока не существует, то создаём новый период и возвращаем нулевые статистики
+			a.beginNewPeriod(postUnion.ID, platform)
+			stats = &entity.PostPlatformStats{
+				TeamID:      postUnion.TeamID,
+				PostUnionID: request.PostUnionID,
+				Platform:    platform,
+				PeriodStart: time.Now(),
+				Views:       0,
+				Comments:    0,
+				Reactions:   0,
 			}
-			allStats = append(allStats, tgStats)
-
-		case "vk":
-			vkStats, err := a.analyticsRepo.GetPostPlatformStatsByPostUnionID(request.PostUnionID, "vk")
-			if errors.Is(err, repo.ErrPostPlatformStatsNotFound) {
-				// If no stats exist, create new ones
-				vkStats = &entity.PostPlatformStats{
-					TeamID:      request.TeamID,
-					PostUnionID: request.PostUnionID,
-					Platform:    "vk",
-					Views:       0,
-					Reactions:   0,
-					Comments:    0,
-					LastUpdate:  time.Now(),
-				}
-			} else if err != nil {
-				return nil, fmt.Errorf("failed to get VK stats: %w", err)
-			}
-			allStats = append(allStats, vkStats)
+			return allStats, nil
+		} else if err != nil {
+			return nil, fmt.Errorf("failed to get stats: %w", err)
 		}
+		allStats[i] = stats
 	}
-	// todo другие платформы
 
 	return allStats, nil
 }

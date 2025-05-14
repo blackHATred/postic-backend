@@ -166,13 +166,18 @@ func (c *Comment) GetLastComments(request *entity.GetCommentsRequest) ([]*entity
 		}
 	}
 
-	if request.Limit > 100 {
+	if request.Limit == 0 || request.Limit > 100 {
 		request.Limit = 100
 	}
 
 	// Получаем комментарии из репозитория, используя текущее время как верхнюю границу
 	// для получения самых последних комментариев
-	comments, err := c.commentRepo.GetComments(request.TeamID, request.PostUnionID, request.Offset, request.Before, request.Limit, request.MarkedAsTicket)
+	var comments []*entity.Comment
+	if request.MarkedAsTicket == nil || *request.MarkedAsTicket == false {
+		comments, err = c.commentRepo.GetComments(request.TeamID, request.PostUnionID, request.Offset, request.Before, request.Limit)
+	} else {
+		comments, err = c.commentRepo.GetTicketComments(request.TeamID, request.Offset, request.Before, request.Limit)
+	}
 	if err != nil {
 		return nil, err
 	}

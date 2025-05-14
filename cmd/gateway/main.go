@@ -88,7 +88,7 @@ func main() {
 	// -- vk --
 	vkPostPlatformUseCase := vkontakte.NewPost(postRepo, teamRepo, uploadRepo)
 	vkCommentUseCase := vkontakte.NewVkontakteComment(commentRepo, teamRepo, uploadRepo)
-	vkEventListener := vkontakte.NewVKEventListener(vkontakteListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo)
+	vkEventListener := vkontakte.NewVKEventListener(vkontakteListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo)
 	vkAnalytics := vkontakte.NewVkontakteAnalytics(teamRepo, postRepo, analyticsRepo)
 
 	postUseCase := service.NewPostUnion(
@@ -132,8 +132,8 @@ func main() {
 	// echoServer.Server.ReadHeaderTimeout = 60 * time.Second
 	// echoServer.Server.WriteTimeout = 60 * time.Second
 	// echoServer.Server.IdleTimeout = 60 * time.Second
-	// Не более 20 МБ
-	// echoServer.Use(middleware.BodyLimit("20M"))
+	// Не более 50 МБ
+	echoServer.Use(middleware.BodyLimit("50M"))
 	// gzip на прием
 	// echoServer.Use(middleware.Decompress())
 	// gzip на отдачу

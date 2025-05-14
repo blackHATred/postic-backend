@@ -160,40 +160,17 @@ func (t *EventListener) UpdateStats(update *models.Update) {
 	}
 
 	// Обновляем количество реакций под статистикой
-	existingStats, err := t.analyticsRepo.GetPostPlatformStatsByPostUnionID(post.PostUnionId, "tg")
-	switch {
-	case errors.Is(err, repo.ErrPostPlatformStatsNotFound):
-		// Если статистика не существует, создаём новую
-		postUnion, err := t.postRepo.GetPostUnion(post.PostUnionId)
-		if err != nil {
-			log.Errorf("Failed to get post union: %v", err)
-			return
-		}
+	stats := &entity.PostPlatformStats{
+		TeamID:      tgChannel.TeamID,
+		PostUnionID: post.PostUnionId,
+		Platform:    "tg",
+		Reactions:   totalReactions,
+	}
 
-		newStats := &entity.PostPlatformStats{
-			TeamID:      postUnion.TeamID,
-			PostUnionID: postUnion.ID,
-			Platform:    "tg",
-			Views:       0,
-			Comments:    0,
-			Reactions:   totalReactions,
-			LastUpdate:  time.Now(),
-		}
-
-		err = t.analyticsRepo.AddPostPlatformStats(newStats)
-		if err != nil {
-			log.Errorf("Failed to add post platform stats: %v", err)
-		}
-	case err != nil:
-		log.Errorf("Failed to get post platform stats: %v", err)
-		return
-	default:
-		// Обновляем существующую статистику
-		existingStats.Reactions = totalReactions
-		err = t.analyticsRepo.EditPostPlatformStats(existingStats)
-		if err != nil {
-			log.Errorf("Failed to update post platform stats: %v", err)
-		}
+	log.Infof("Reactions: %v", stats.Reactions)
+	err = t.analyticsRepo.UpdateLastPlatformStats(stats, "tg")
+	if err != nil {
+		log.Errorf("failed to update post platform stats: %v", err)
 	}
 }
 
@@ -241,7 +218,7 @@ func getExtensionForType(fileType string) string {
 	case "voice":
 		return "ogg"
 	case "document":
-		return "bin" // generic binary extension for documents
+		return "bin"
 	case "sticker":
 		return "webp"
 	default:
@@ -275,11 +252,9 @@ func (t *EventListener) saveFile(fileID, fileType string) (int, error) {
 	body = resp.Body
 
 	if file.FilePath != "" && strings.Contains(file.FilePath, ".") {
-		// Extract extension from original Post file path
 		parts := strings.Split(file.FilePath, ".")
 		extension = parts[len(parts)-1]
 	} else {
-		// Fallback to mapping based on fileType
 		extension = getExtensionForType(fileType)
 	}
 
@@ -523,8 +498,6 @@ func (t *EventListener) handleComment(update *models.Update) error {
 				tgChannel.ID,
 				"tg",
 			)
-
-			log.Infof("Blabla %v", postTg)
 
 			if errors.Is(err, repo.ErrPostPlatformNotFound) {
 				// Если это не пост, то возможно это ответ на комментарий
