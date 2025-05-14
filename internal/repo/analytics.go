@@ -21,9 +21,9 @@ type Analytics interface {
 	UpdateLastPlatformStats(stats *entity.PostPlatformStats, platform string) error
 
 	// GetUserKPI возвращает KPI по посту
-	GetUserKPI(userID int, startDate, endDate time.Time) (float64, error)
+	GetUserKPI(userID int, startDate, endDate time.Time) (*entity.UserKPI, error)
 	// CompareUserKPI возвращает KPI по постам для нескольких пользователей
-	CompareUserKPI(userIDs []int, startDate, endDate time.Time) (map[int]float64, error)
+	CompareUserKPI(userIDs []int, startDate, endDate time.Time) (map[int]*entity.UserKPI, error)
 }
 
 var (

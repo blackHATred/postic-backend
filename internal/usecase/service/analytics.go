@@ -185,15 +185,18 @@ func (a *Analytics) GetUsersKPI(request *entity.GetUsersKPIRequest) (*entity.Use
 	kpi := make([]entity.UserKPI, len(userIDs))
 
 	for i, userID := range userIDs {
-		kpiValue, err := a.analyticsRepo.GetUserKPI(userID, request.Start, request.End)
+		userKPI, err := a.analyticsRepo.GetUserKPI(userID, request.Start, request.End)
 		if errors.Is(err, repo.ErrPostPlatformStatsNotFound) {
 			continue
 		} else if err != nil {
 			return nil, fmt.Errorf("failed to get kpi: %w", err)
 		}
 		kpi[i] = entity.UserKPI{
-			UserID: userID,
-			KPI:    kpiValue,
+			UserID:    userID,
+			KPI:       userKPI.KPI,
+			Views:     userKPI.Views,
+			Comments:  userKPI.Comments,
+			Reactions: userKPI.Reactions,
 		}
 	}
 

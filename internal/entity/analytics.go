@@ -29,8 +29,11 @@ type GetUsersKPIRequest struct {
 }
 
 type UserKPI struct {
-	UserID int     `json:"user_id"`
-	KPI    float64 `json:"kpi"`
+	UserID    int     `json:"user_id"`
+	KPI       float64 `json:"kpi"`
+	Views     int     `json:"views" db:"views"`
+	Comments  int     `json:"comments" db:"comments"`
+	Reactions int     `json:"reactions" db:"reactions"`
 }
 
 type UsersKPIResponse struct {

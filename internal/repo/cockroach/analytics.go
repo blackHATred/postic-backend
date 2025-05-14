@@ -260,7 +260,7 @@ func (a *Analytics) CommentsCount(postUnionID int) (int, error) {
 	return count, nil
 }
 
-func (a *Analytics) GetUserKPI(userID int, startDate, endDate time.Time) (float64, error) {
+func (a *Analytics) GetUserKPI(userID int, startDate, endDate time.Time) (*entity.UserKPI, error) {
 	// Получаем все посты пользователя за указанный период
 	queryPosts := `
 		SELECT id
@@ -270,11 +270,11 @@ func (a *Analytics) GetUserKPI(userID int, startDate, endDate time.Time) (float6
 	var postIDs []int
 	err := a.db.Select(&postIDs, queryPosts, userID, startDate, endDate)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get posts for user: %w", err)
+		return nil, fmt.Errorf("failed to get posts for user: %w", err)
 	}
 
 	if len(postIDs) == 0 {
-		return 0, nil // Нет постов за указанный период
+		return &entity.UserKPI{UserID: userID, KPI: 0, Views: 0, Reactions: 0, Comments: 0}, nil // Нет постов за указанный период
 	}
 
 	// Инициализируем метрики
@@ -291,7 +291,7 @@ func (a *Analytics) GetUserKPI(userID int, startDate, endDate time.Time) (float6
 		var views, reactions int
 		err := a.db.QueryRow(queryStats, postID, startDate, endDate).Scan(&views, &reactions)
 		if err != nil {
-			return 0, fmt.Errorf("failed to get stats for post %d: %w", postID, err)
+			return nil, fmt.Errorf("failed to get stats for post %d: %w", postID, err)
 		}
 
 		// Получаем количество комментариев из post_comment
@@ -303,7 +303,7 @@ func (a *Analytics) GetUserKPI(userID int, startDate, endDate time.Time) (float6
 		var comments int
 		err = a.db.QueryRow(queryComments, postID, startDate, endDate).Scan(&comments)
 		if err != nil {
-			return 0, fmt.Errorf("failed to get comments for post %d: %w", postID, err)
+			return nil, fmt.Errorf("failed to get comments for post %d: %w", postID, err)
 		}
 
 		// Суммируем метрики
@@ -320,11 +320,17 @@ func (a *Analytics) GetUserKPI(userID int, startDate, endDate time.Time) (float6
 	)
 	kpi := float64(totalViews)*weightViews + float64(totalReactions)*weightReactions + float64(totalComments)*weightComments
 
-	return kpi, nil
+	return &entity.UserKPI{
+		UserID:    userID,
+		KPI:       kpi,
+		Views:     totalViews,
+		Reactions: totalReactions,
+		Comments:  totalComments,
+	}, nil
 }
 
-func (a *Analytics) CompareUserKPI(userIDs []int, startDate, endDate time.Time) (map[int]float64, error) {
-	kpiResults := make(map[int]float64)
+func (a *Analytics) CompareUserKPI(userIDs []int, startDate, endDate time.Time) (map[int]*entity.UserKPI, error) {
+	kpiResults := make(map[int]*entity.UserKPI)
 
 	for _, userID := range userIDs {
 		kpi, err := a.GetUserKPI(userID, startDate, endDate)

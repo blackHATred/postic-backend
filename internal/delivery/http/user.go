@@ -28,6 +28,7 @@ func (u *User) Configure(server *echo.Group) {
 	server.POST("/register", u.Register)
 	server.POST("/login", u.Login)
 	server.GET("/me", u.Me)
+	server.POST("/logout", u.Logout)
 }
 
 func (u *User) Register(c echo.Context) error {
@@ -90,4 +91,21 @@ func (u *User) Me(c echo.Context) error {
 	return c.JSON(http.StatusOK, echo.Map{
 		"user_id": userId,
 	})
+}
+
+func (u *User) Logout(c echo.Context) error {
+	_, err := u.authManager.CheckAuthFromContext(c)
+	switch {
+	case errors.Is(err, utils.ErrUnauthorized):
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	case err != nil:
+		c.Logger().Errorf("Ошибка при проверке авторизации пользователя: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Произошла непредвиденная ошибка",
+		})
+	}
+	c.SetCookie(u.cookieManager.SetSessionCookie("", time.Now().Add(-time.Hour)))
+	return c.NoContent(http.StatusOK)
 }
