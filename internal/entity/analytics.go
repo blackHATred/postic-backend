@@ -21,6 +21,22 @@ type GetPostUnionStatsRequest struct {
 	PostUnionID int `query:"post_union_id"`
 }
 
+type GetUsersKPIRequest struct {
+	UserID int       `query:"-"`
+	TeamID int       `query:"team_id"`
+	Start  time.Time `query:"start"`
+	End    time.Time `query:"end"`
+}
+
+type UserKPI struct {
+	UserID int     `json:"user_id"`
+	KPI    float64 `json:"kpi"`
+}
+
+type UsersKPIResponse struct {
+	Users []UserKPI `json:"users"`
+}
+
 type PostPlatformStats struct {
 	ID          int        `json:"-" db:"id"`
 	TeamID      int        `json:"team_id" db:"team_id"`
