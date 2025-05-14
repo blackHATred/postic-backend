@@ -37,6 +37,8 @@ type Team interface {
 	PutTGChannel(tgChannel *entity.TGChannel) error
 	// GetTGChannelByDiscussionId возвращает телеграм канал по ID обсуждения
 	GetTGChannelByDiscussionId(discussionId int) (*entity.TGChannel, error)
+	// GetTGChannelByChannelID возвращает телеграм канал по ID канала
+	GetTGChannelByChannelID(channelID int) (*entity.TGChannel, error)
 
 	// PutVKGroup привязывает группу к команде
 	PutVKGroup(vkChannel *entity.VKChannel) error

@@ -57,14 +57,14 @@ func (a *Analytics) beginNewPeriod(postUnionID int, platform string) {
 	currentDate := time.Now()
 	// Если время последнего отсчёта больше 5 минут назад, создаем новый период
 	if currentDate.Sub(stats.PeriodStart) > 5*time.Minute {
-		err = a.analyticsRepo.CreateNewPeriod(postUnionID, platform)
-		if err != nil {
-			log.Errorf("Error creating new period: %v", err)
-			return
-		}
 		err = a.analyticsRepo.EndPeriod(postUnionID, platform)
 		if err != nil {
 			log.Errorf("Error ending period: %v", err)
+			return
+		}
+		err = a.analyticsRepo.CreateNewPeriod(postUnionID, platform)
+		if err != nil {
+			log.Errorf("Error creating new period: %v", err)
 			return
 		}
 		// Обновляем статистику по платформе
@@ -98,20 +98,28 @@ func (a *Analytics) GetStats(request *entity.GetStatsRequest) (*entity.StatsResp
 		if err != nil {
 			return nil, err
 		}
-		allStats = append(allStats, stats...)
+		if stats != nil {
+			allStats = append(allStats, stats)
+		}
 	}
 
 	// составляем ответ
 	posts := make([]*entity.PostStats, len(allStats))
 	for i, postPlatformStats := range allStats {
 		go a.beginNewPeriod(postPlatformStats.PostUnionID, postPlatformStats.Platform)
+		platformStats := &entity.PlatformStats{
+			Views:     postPlatformStats.Views,
+			Comments:  postPlatformStats.Comments,
+			Reactions: postPlatformStats.Reactions,
+		}
 		posts[i] = &entity.PostStats{
 			PostUnionID: postPlatformStats.PostUnionID,
-			Telegram: &entity.PlatformStats{
-				Views:     postPlatformStats.Views,
-				Comments:  postPlatformStats.Comments,
-				Reactions: postPlatformStats.Reactions,
-			},
+		}
+		switch postPlatformStats.Platform {
+		case "tg":
+			posts[i].Telegram = platformStats
+		case "vk":
+			posts[i].Vkontakte = platformStats
 		}
 	}
 	return &entity.StatsResponse{

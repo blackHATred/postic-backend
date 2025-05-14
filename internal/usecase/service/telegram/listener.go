@@ -132,9 +132,9 @@ func (t *EventListener) StopListener() {
 }
 
 func (t *EventListener) UpdateStats(update *models.Update) {
-	tgChannel, err := t.teamRepo.GetTGChannelByDiscussionId(int(update.MessageReactionCount.Chat.ID))
+	tgChannel, err := t.teamRepo.GetTGChannelByChannelID(int(update.MessageReactionCount.Chat.ID))
 	if errors.Is(err, repo.ErrTGChannelNotFound) {
-		log.Debugf("Channel not found for discussion ID: %d", update.MessageReactionCount.Chat.ID)
+		log.Infof("Channel not found for discussion ID: %d", update.MessageReactionCount.Chat.ID)
 		return
 	}
 	post, err := t.postRepo.GetPostPlatformByPost(
@@ -145,6 +145,7 @@ func (t *EventListener) UpdateStats(update *models.Update) {
 	switch {
 	case errors.Is(err, repo.ErrPostPlatformNotFound):
 		// игнорируем такую ошибку
+		log.Infof("Post not found for message ID: %d", update.MessageReactionCount.MessageID)
 		return
 	case err != nil:
 		log.Errorf("Failed to get post: %v", err)

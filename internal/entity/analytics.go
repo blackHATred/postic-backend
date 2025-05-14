@@ -25,8 +25,8 @@ type PostPlatformStats struct {
 	ID          int        `json:"-" db:"id"`
 	TeamID      int        `json:"team_id" db:"team_id"`
 	PostUnionID int        `json:"post_union_id" db:"post_union_id"`
-	PeriodStart time.Time  `json:"period_start" db:"period_start"`
-	PeriodEnd   *time.Time `json:"period_end,omitempty" db:"period_end"`
+	PeriodStart time.Time  `json:"-" db:"period_start"`
+	PeriodEnd   *time.Time `json:"-" db:"period_end"`
 	Platform    string     `json:"platform" db:"platform"`
 	Views       int        `json:"views" db:"views"`
 	Comments    int        `json:"comments"` // В базе данных прямо не хранится, надо считать из смежных таблиц
