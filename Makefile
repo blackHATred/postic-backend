@@ -5,7 +5,7 @@ migration-file:
 		exit 1; \
 	fi
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S) && \
-	FILENAME="$R__${TIMESTAMP}_$(MIGRATION_NAME).sql" && \
+	FILENAME="R__$${TIMESTAMP}_$(MIGRATION_NAME).sql" && \
 	touch "cockroachdb/migrations/$${FILENAME}" && \
 	echo "Migration file created: $${FILENAME}"
 
