@@ -555,7 +555,54 @@ func (p *PostDB) DeletePlatformFromPostUnion(postUnionID int, platform string) e
 	return tx.Commit()
 }
 
-func (p *PostDB) DeletePostPlatform() error {
-	//TODO implement me
-	panic("implement me")
+func (p *PostDB) DeletePostPlatform(postUnionID int, platform string) error {
+	// Начинаем транзакцию
+	tx, err := p.db.Beginx()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Сначала получаем ID записей из post_platform для последующего удаления связанных записей
+	var postPlatformIDs []int
+	queryIDs := `
+		SELECT id
+		FROM post_platform
+		WHERE post_union_id = $1 AND platform = $2
+	`
+	err = tx.Select(&postPlatformIDs, queryIDs, postUnionID, platform)
+	if err != nil {
+		return err
+	}
+
+	// Если это Telegram, удаляем связанные записи из tg_post_platform_group
+	if platform == "tg" && len(postPlatformIDs) > 0 {
+		for _, ppID := range postPlatformIDs {
+			deleteGroupQuery := `
+				DELETE FROM tg_post_platform_group
+				WHERE post_platform_id = $1
+			`
+			_, err = tx.Exec(deleteGroupQuery, ppID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	// Удаляем записи из post_platform
+	deleteQuery := `
+		DELETE FROM post_platform
+		WHERE post_union_id = $1 AND platform = $2
+	`
+	_, err = tx.Exec(deleteQuery, postUnionID, platform)
+	if err != nil {
+		return err
+	}
+
+	// Коммитим транзакцию
+	return tx.Commit()
 }

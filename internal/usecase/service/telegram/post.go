@@ -409,11 +409,10 @@ func (p *Post) deletePostAsync(post *entity.PostUnion, actionId int, tgChannel *
 		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
-
 	if postPlatform.TgPostPlatformGroup != nil && len(postPlatform.TgPostPlatformGroup) > 0 {
 		// сначала удаляем все связанные в медиагруппе сообщения
 		for _, tgPost := range postPlatform.TgPostPlatformGroup {
-			msg := tgbotapi.NewDeleteMessage(int64(tgPost.TgPostID), tgPost.PostPlatformID)
+			msg := tgbotapi.NewDeleteMessage(int64(tgChannel.ChannelID), tgPost.TgPostID)
 			_, err = p.bot.Send(msg)
 			if err != nil {
 				p.updatePostActionStatus(actionId, "error", err.Error())
@@ -422,18 +421,22 @@ func (p *Post) deletePostAsync(post *entity.PostUnion, actionId int, tgChannel *
 		}
 	}
 	msg := tgbotapi.NewDeleteMessage(int64(tgChannel.ChannelID), postPlatform.PostId)
-	_, err = p.bot.Send(msg)
+	_, err = p.bot.Request(msg)
 	if err != nil {
 		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
-
+	// Удаляем запись из post_platform после успешного удаления из Telegram
+	err = retry.Retry(func() error {
+		return p.postRepo.DeletePostPlatform(post.ID, "tg")
+	})
+	if err != nil {
+		log.Errorf("error while deleting post platform record: %v", err)
+	}
 	err = retry.Retry(func() error {
 		return p.postRepo.DeletePlatformFromPostUnion(post.ID, "tg")
 	})
 	if err != nil {
 		log.Errorf("error while deleting post platform: %v", err)
 	}
-
-	p.updatePostActionStatus(actionId, "success", "")
 }

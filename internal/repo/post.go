@@ -45,7 +45,8 @@ type Post interface {
 	GetPostPlatformByPost(platformID int, channelID int, platform string) (*entity.PostPlatform, error)
 	// AddPostPlatform добавляет связанную с PostUnion запись про пост, опубликованный на платформе
 	AddPostPlatform(postPlatform *entity.PostPlatform) (int, error)
-	DeletePostPlatform() error
+	// DeletePostPlatform удаляет записи о постах для конкретной платформы из базы данных
+	DeletePostPlatform(postUnionID int, platform string) error
 }
 
 var (
