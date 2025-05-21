@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/entity"
+	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
 	"time"
 )
@@ -29,16 +30,41 @@ func (u *User) Configure(server *echo.Group) {
 	server.POST("/login", u.Login)
 	server.GET("/me", u.Me)
 	server.POST("/logout", u.Logout)
+	server.PUT("/update-password", u.UpdatePassword)
+	server.PUT("/update-profile", u.UpdateProfile)
+	server.GET("/profile", u.GetProfile)
 }
 
 func (u *User) Register(c echo.Context) error {
-	userID, err := u.userUseCase.Register()
+	var registerRequest entity.RegisterRequest
+	err := utils.ReadJSON(c, &registerRequest)
 	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат запроса",
+		})
+	}
+
+	// Валидация данных
+	if registerRequest.Email == "" || registerRequest.Password == "" || registerRequest.Nickname == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Email, пароль и имя пользователя обязательны для заполнения",
+		})
+	}
+
+	userID, err := u.userUseCase.Register(&registerRequest)
+	if err != nil {
+		if errors.Is(err, repo.ErrEmailExists) {
+			return c.JSON(http.StatusConflict, echo.Map{
+				"error": "Пользователь с таким email уже существует",
+			})
+		}
+
 		c.Logger().Errorf("Ошибка при регистрации пользователя: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{
 			"error": "Произошла непредвиденная ошибка",
 		})
 	}
+
 	token, err := u.authManager.CreateToken(userID)
 	if err != nil {
 		c.Logger().Errorf("Ошибка при создании токена: %v", err)
@@ -46,10 +72,13 @@ func (u *User) Register(c echo.Context) error {
 			"error": "Произошла непредвиденная ошибка",
 		})
 	}
+
 	expires := time.Now().AddDate(1, 0, 0)
 	c.SetCookie(u.cookieManager.SetSessionCookie(token, expires))
+
 	return c.JSON(http.StatusOK, echo.Map{
 		"user_id": userID,
+		"token":   token,
 	})
 }
 
@@ -61,22 +90,47 @@ func (u *User) Login(c echo.Context) error {
 			"error": "Неверный формат запроса",
 		})
 	}
-	token, err := u.authManager.Login(loginRequest.UserID)
+
+	// Валидация
+	if loginRequest.Email == "" || loginRequest.Password == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Email и пароль обязательны для заполнения",
+		})
+	}
+
+	userID, err := u.userUseCase.Login(loginRequest.Email, loginRequest.Password)
 	if err != nil {
+		if errors.Is(err, repo.ErrInvalidPassword) || errors.Is(err, repo.ErrUserNotFound) {
+			return c.JSON(http.StatusUnauthorized, echo.Map{
+				"error": "Неверный email или пароль",
+			})
+		}
+
 		c.Logger().Errorf("Ошибка при авторизации пользователя: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{
 			"error": "Произошла непредвиденная ошибка",
 		})
 	}
+
+	token, err := u.authManager.CreateToken(userID)
+	if err != nil {
+		c.Logger().Errorf("Ошибка при создании токена: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Произошла непредвиденная ошибка",
+		})
+	}
+
 	expires := time.Now().AddDate(1, 0, 0)
 	c.SetCookie(u.cookieManager.SetSessionCookie(token, expires))
+
 	return c.JSON(http.StatusOK, echo.Map{
-		"token": token,
+		"user_id": userID,
+		"token":   token,
 	})
 }
 
 func (u *User) Me(c echo.Context) error {
-	userId, err := u.authManager.CheckAuthFromContext(c)
+	userID, err := u.authManager.CheckAuthFromContext(c)
 	switch {
 	case errors.Is(err, utils.ErrUnauthorized):
 		return c.JSON(http.StatusUnauthorized, echo.Map{
@@ -88,9 +142,22 @@ func (u *User) Me(c echo.Context) error {
 			"error": "Произошла непредвиденная ошибка",
 		})
 	}
-	return c.JSON(http.StatusOK, echo.Map{
-		"user_id": userId,
-	})
+
+	profile, err := u.userUseCase.GetUser(userID)
+	if err != nil {
+		if errors.Is(err, repo.ErrUserNotFound) {
+			return c.JSON(http.StatusUnauthorized, echo.Map{
+				"error": "Пользователь не найден",
+			})
+		}
+
+		c.Logger().Errorf("Ошибка при получении профиля пользователя: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Произошла непредвиденная ошибка",
+		})
+	}
+
+	return c.JSON(http.StatusOK, profile)
 }
 
 func (u *User) Logout(c echo.Context) error {
@@ -106,6 +173,130 @@ func (u *User) Logout(c echo.Context) error {
 			"error": "Произошла непредвиденная ошибка",
 		})
 	}
+
 	c.SetCookie(u.cookieManager.SetSessionCookie("", time.Now().Add(-time.Hour)))
 	return c.NoContent(http.StatusOK)
+}
+
+func (u *User) UpdatePassword(c echo.Context) error {
+	userID, err := u.authManager.CheckAuthFromContext(c)
+	switch {
+	case errors.Is(err, utils.ErrUnauthorized):
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	case err != nil:
+		c.Logger().Errorf("Ошибка при проверке авторизации пользователя: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Произошла непредвиденная ошибка",
+		})
+	}
+
+	var updatePasswordRequest entity.UpdatePasswordRequest
+	err = utils.ReadJSON(c, &updatePasswordRequest)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат запроса",
+		})
+	}
+
+	// Валидация
+	if updatePasswordRequest.OldPassword == "" || updatePasswordRequest.NewPassword == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Старый и новый пароли обязательны для заполнения",
+		})
+	}
+
+	err = u.userUseCase.UpdatePassword(userID, updatePasswordRequest.OldPassword, updatePasswordRequest.NewPassword)
+	if err != nil {
+		if errors.Is(err, repo.ErrInvalidPassword) {
+			return c.JSON(http.StatusUnauthorized, echo.Map{
+				"error": "Неверный старый пароль",
+			})
+		}
+
+		c.Logger().Errorf("Ошибка при обновлении пароля пользователя: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Произошла непредвиденная ошибка",
+		})
+	}
+
+	return c.NoContent(http.StatusOK)
+}
+
+func (u *User) UpdateProfile(c echo.Context) error {
+	userID, err := u.authManager.CheckAuthFromContext(c)
+	switch {
+	case errors.Is(err, utils.ErrUnauthorized):
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	case err != nil:
+		c.Logger().Errorf("Ошибка при проверке авторизации пользователя: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Произошла непредвиденная ошибка",
+		})
+	}
+
+	var updateProfileRequest entity.UpdateProfileRequest
+	err = utils.ReadJSON(c, &updateProfileRequest)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат запроса",
+		})
+	}
+
+	// Валидация
+	if updateProfileRequest.Nickname == "" && updateProfileRequest.Email == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Должно быть указано хотя бы одно поле для обновления",
+		})
+	}
+
+	err = u.userUseCase.UpdateProfile(userID, &updateProfileRequest)
+	if err != nil {
+		if errors.Is(err, repo.ErrEmailExists) {
+			return c.JSON(http.StatusConflict, echo.Map{
+				"error": "Пользователь с таким email уже существует",
+			})
+		}
+
+		c.Logger().Errorf("Ошибка при обновлении профиля пользователя: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Произошла непредвиденная ошибка",
+		})
+	}
+
+	return c.NoContent(http.StatusOK)
+}
+
+func (u *User) GetProfile(c echo.Context) error {
+	userID, err := u.authManager.CheckAuthFromContext(c)
+	switch {
+	case errors.Is(err, utils.ErrUnauthorized):
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	case err != nil:
+		c.Logger().Errorf("Ошибка при проверке авторизации пользователя: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Произошла непредвиденная ошибка",
+		})
+	}
+
+	profile, err := u.userUseCase.GetUser(userID)
+	if err != nil {
+		if errors.Is(err, repo.ErrUserNotFound) {
+			return c.JSON(http.StatusUnauthorized, echo.Map{
+				"error": "Пользователь не найден",
+			})
+		}
+
+		c.Logger().Errorf("Ошибка при получении профиля пользователя: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Произошла непредвиденная ошибка",
+		})
+	}
+
+	return c.JSON(http.StatusOK, profile)
 }
