@@ -46,6 +46,7 @@ func main() {
 	vkRedirectURL := os.Getenv("VK_REDIRECT_URL")
 	vkSuccessURL := os.Getenv("VK_FRONTEND_SUCCESS_REDIRECT_URL")
 	vkErrorURL := os.Getenv("VK_FRONTEND_ERROR_REDIRECT_URL")
+	kafkaBrokers := os.Getenv("KAFKA_BROKERS")
 
 	vkAuth := utils.NewVKOAuth(vkClientID, vkClientSecret, vkRedirectURL)
 
@@ -68,7 +69,7 @@ func main() {
 	}
 
 	// запускаем сервисы репозиториев (подключение к базе данных)
-	eventRepo, err := kafka.NewCommentEventKafkaRepository([]string{"localhost:9092"})
+	eventRepo, err := kafka.NewCommentEventKafkaRepository(strings.Split(kafkaBrokers, ","))
 	if err != nil {
 		log.Fatalf("Ошибка при создании Kafka репозитория: %v", err)
 	}
