@@ -1,14 +1,13 @@
 package vkontakte
 
 import (
+	"context"
 	"fmt"
 	"github.com/SevereCloud/vksdk/v3/api"
 	"github.com/labstack/gommon/log"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
-	"postic-backend/internal/usecase"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -16,57 +15,26 @@ type Comment struct {
 	commentRepo repo.Comment
 	teamRepo    repo.Team
 	uploadRepo  repo.Upload
-	subscribers map[entity.Subscriber]chan *entity.CommentEvent
-	mu          sync.Mutex
+	eventRepo   repo.CommentEventRepository
 }
 
 func NewVkontakteComment(
 	commentRepo repo.Comment,
 	teamRepo repo.Team,
 	uploadRepo repo.Upload,
-) usecase.CommentActionPlatform {
+	eventRepo repo.CommentEventRepository,
+) *Comment {
 	return &Comment{
 		commentRepo: commentRepo,
 		teamRepo:    teamRepo,
 		uploadRepo:  uploadRepo,
-		subscribers: make(map[entity.Subscriber]chan *entity.CommentEvent),
+		eventRepo:   eventRepo,
 	}
-}
-
-func (c *Comment) SubscribeToCommentEvents(userID, teamID, postUnionID int) <-chan *entity.CommentEvent {
-	sub := entity.Subscriber{
-		UserID:      userID,
-		TeamID:      teamID,
-		PostUnionID: postUnionID,
-	}
-	c.mu.Lock()
-	if ch, ok := c.subscribers[sub]; ok {
-		c.mu.Unlock()
-		return ch
-	}
-	ch := make(chan *entity.CommentEvent)
-	c.subscribers[sub] = ch
-	c.mu.Unlock()
-	return ch
-}
-
-func (c *Comment) UnsubscribeFromComments(userID, teamID, postUnionID int) {
-	sub := entity.Subscriber{
-		UserID:      userID,
-		TeamID:      teamID,
-		PostUnionID: postUnionID,
-	}
-	c.mu.Lock()
-	if ch, ok := c.subscribers[sub]; ok {
-		close(ch)
-		delete(c.subscribers, sub)
-	}
-	c.mu.Unlock()
 }
 
 func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error) {
 	// Получаем информацию о комментарии
-	comment, err := c.commentRepo.GetCommentInfo(request.CommentID)
+	comment, err := c.commentRepo.GetComment(request.CommentID)
 	if err != nil {
 		return 0, err
 	}
@@ -168,20 +136,26 @@ func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 		return 0, err
 	}
 
-	// Уведомляем подписчиков
-	postUnionId := 0
-	if comment.PostUnionID != nil {
-		postUnionId = *comment.PostUnionID
-	}
-	err = c.notifySubscribers(commentID, postUnionId, request.TeamID, "new")
-	if err != nil {
-		log.Errorf("Failed to notify subscribers about replied comment: %v", err)
+	// Публикуем событие о новом комментарии в Kafka
+	newComment, _ := c.commentRepo.GetComment(commentID)
+	if newComment != nil {
+		event := &entity.CommentEvent{
+			EventID:    fmt.Sprintf("vk-%d-%d", newComment.TeamID, commentID),
+			TeamID:     newComment.TeamID,
+			PostID:     derefInt(newComment.PostUnionID),
+			Type:       entity.CommentCreated,
+			CommentID:  newComment.ID,
+			OccurredAt: newComment.CreatedAt,
+		}
+		if err := c.eventRepo.PublishCommentEvent(context.Background(), event); err != nil {
+			log.Errorf("Не удалось опубликовать событие о новом комментарии в Kafka: %v", err)
+		}
 	}
 
 	return response.CommentID, nil
 }
 func (c *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
-	comment, err := c.commentRepo.GetCommentInfo(request.PostCommentID)
+	comment, err := c.commentRepo.GetComment(request.PostCommentID)
 	if err != nil {
 		return err
 	}
@@ -209,52 +183,25 @@ func (c *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 		return err
 	}
 
-	postUnionId := 0
-	if comment.PostUnionID != nil {
-		postUnionId = *comment.PostUnionID
+	// Публикуем событие об удалении комментария в Kafka
+	event := &entity.CommentEvent{
+		EventID:    fmt.Sprintf("vk-del-%d-%d", comment.TeamID, comment.ID),
+		TeamID:     comment.TeamID,
+		PostID:     derefInt(comment.PostUnionID),
+		Type:       entity.CommentDeleted,
+		CommentID:  comment.ID,
+		OccurredAt: time.Now(),
 	}
-	err = c.notifySubscribers(request.PostCommentID, postUnionId, request.TeamID, "deleted")
-	if err != nil {
-		log.Errorf("Failed to notify subscribers about deleted comment: %v", err)
+	if err := c.eventRepo.PublishCommentEvent(context.Background(), event); err != nil {
+		log.Errorf("Не удалось опубликовать событие об удалении комментария в Kafka: %v", err)
 	}
 
 	return nil
 }
 
-func (c *Comment) notifySubscribers(commentID, postUnionID, teamID int, eventType string) error {
-	teamMemberIDs, err := c.teamRepo.GetTeamUsers(teamID)
-	if err != nil {
-		log.Errorf("Failed to get team members: %v", err)
-		return err
+func derefInt(ptr *int) int {
+	if ptr != nil {
+		return *ptr
 	}
-
-	for _, memberID := range teamMemberIDs {
-		sub := entity.Subscriber{
-			UserID:      memberID,
-			TeamID:      teamID,
-			PostUnionID: 0,
-		}
-		c.mu.Lock()
-		if ch, ok := c.subscribers[sub]; ok {
-			go func() {
-				ch <- &entity.CommentEvent{
-					CommentID: commentID,
-					Type:      eventType,
-				}
-			}()
-		}
-		if postUnionID != 0 {
-			sub.PostUnionID = postUnionID
-			if ch, ok := c.subscribers[sub]; ok {
-				go func() {
-					ch <- &entity.CommentEvent{
-						CommentID: commentID,
-						Type:      eventType,
-					}
-				}()
-			}
-		}
-		c.mu.Unlock()
-	}
-	return nil
+	return 0
 }

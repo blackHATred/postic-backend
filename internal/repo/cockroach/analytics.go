@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	sq "github.com/Masterminds/squirrel"
 	"github.com/jmoiron/sqlx"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
@@ -21,24 +22,32 @@ func NewAnalytics(db *sqlx.DB) repo.Analytics {
 }
 
 func (a *Analytics) GetPostPlatformStatsByPostUnionID(postUnionID int, platform string) (*entity.PostPlatformStats, error) {
-	query := `
-		SELECT id, team_id, post_union_id, period_start, period_end, platform, views, reactions
-		FROM post_platform_stats_history
-		WHERE post_union_id = $1 AND platform = $2
-		ORDER BY period_start DESC
-		LIMIT 1
-	`
+	query, args, err := sq.Select("id", "team_id", "post_union_id", "period_start", "period_end", "platform", "views", "reactions").
+		From("post_platform_stats_history").
+		Where(sq.Eq{"post_union_id": postUnionID}).
+		Where(sq.Eq{"platform": platform}).
+		OrderBy("period_start DESC").
+		Limit(1).
+		PlaceholderFormat(sq.Dollar).
+		ToSql()
+
+	if err != nil {
+		return nil, fmt.Errorf("ошибка при формировании SQL-запроса: %w", err)
+	}
 
 	stats := &entity.PostPlatformStats{}
-	err := a.db.Get(stats, query, postUnionID, platform)
+	err = a.db.Get(stats, query, args...)
 	if err != nil {
-		return nil, repo.ErrPostPlatformStatsNotFound
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, repo.ErrPostPlatformStatsNotFound
+		}
+		return nil, fmt.Errorf("ошибка при получении статистики поста: %w", err)
 	}
 
 	// Получаем количество комментариев из отдельной таблицы
 	comments, err := a.CommentsCount(postUnionID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ошибка при получении количества комментариев: %w", err)
 	}
 	stats.Comments = comments
 
@@ -46,24 +55,33 @@ func (a *Analytics) GetPostPlatformStatsByPostUnionID(postUnionID int, platform 
 }
 
 func (a *Analytics) GetPostPlatformStatsByPeriod(startDate, endDate time.Time, platform string) ([]*entity.PostPlatformStats, error) {
-	query := `
-			SELECT id, team_id, post_union_id, period_start, period_end, platform, views, reactions
-			FROM post_platform_stats_history
-			WHERE platform = $1 AND period_start > $2 AND (period_end IS NULL OR period_end < $3)
-			ORDER BY period_start DESC
-		`
+	query, args, err := sq.Select("id", "team_id", "post_union_id", "period_start", "period_end", "platform", "views", "reactions").
+		From("post_platform_stats_history").
+		Where(sq.Eq{"platform": platform}).
+		Where(sq.Gt{"period_start": startDate}).
+		Where(sq.Or{
+			sq.Eq{"period_end": nil},
+			sq.Lt{"period_end": endDate},
+		}).
+		OrderBy("period_start DESC").
+		PlaceholderFormat(sq.Dollar).
+		ToSql()
+
+	if err != nil {
+		return nil, fmt.Errorf("ошибка при формировании SQL-запроса: %w", err)
+	}
 
 	var stats []*entity.PostPlatformStats
-	err := a.db.Select(&stats, query, platform, startDate, endDate)
+	err = a.db.Select(&stats, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ошибка при получении статистики по периоду: %w", err)
 	}
 
 	// Получаем количество комментариев для каждого поста
 	for _, stat := range stats {
 		comments, err := a.CommentsCount(stat.PostUnionID)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("ошибка при получении количества комментариев для поста %d: %w", stat.PostUnionID, err)
 		}
 		stat.Comments = comments
 	}
@@ -77,21 +95,37 @@ func (a *Analytics) CreateNewPeriod(postUnionID int, platform string) error {
 
 	if errors.Is(err, repo.ErrPostPlatformStatsNotFound) {
 		// Если статистики еще нет, то необходимо получить team_id
-		var teamID int
-		err := a.db.QueryRow("SELECT team_id FROM post_union WHERE id = $1", postUnionID).Scan(&teamID)
+		query, args, err := sq.Select("team_id").
+			From("post_union").
+			Where(sq.Eq{"id": postUnionID}).
+			PlaceholderFormat(sq.Dollar).
+			ToSql()
+
 		if err != nil {
+			return fmt.Errorf("ошибка при формировании SQL-запроса для получения team_id: %w", err)
+		}
+
+		var teamID int
+		err = a.db.QueryRow(query, args...).Scan(&teamID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return repo.ErrPostUnionNotFound
+			}
 			return fmt.Errorf("не удалось получить team_id: %w", err)
 		}
 
 		// Создаем первую запись с нулевыми значениями
-		query := `
-            INSERT INTO post_platform_stats_history (
-                team_id, post_union_id, platform, period_start, period_end, views, reactions
-            ) VALUES (
-                $1, $2, $3, NOW(), NULL, 0, 0
-            )`
+		insertQuery, insertArgs, err := sq.Insert("post_platform_stats_history").
+			Columns("team_id", "post_union_id", "platform", "period_start", "period_end", "views", "reactions").
+			Values(teamID, postUnionID, platform, sq.Expr("NOW()"), nil, 0, 0).
+			PlaceholderFormat(sq.Dollar).
+			ToSql()
 
-		_, err = a.db.Exec(query, teamID, postUnionID, platform)
+		if err != nil {
+			return fmt.Errorf("ошибка при формировании SQL-запроса для создания записи: %w", err)
+		}
+
+		_, err = a.db.Exec(insertQuery, insertArgs...)
 		if err != nil {
 			return fmt.Errorf("не удалось создать начальный период статистики: %w", err)
 		}
@@ -101,14 +135,17 @@ func (a *Analytics) CreateNewPeriod(postUnionID int, platform string) error {
 	}
 
 	// Создаем новый период со значениями из последнего периода
-	query := `
-        INSERT INTO post_platform_stats_history (
-            team_id, post_union_id, platform, period_start, period_end, views, reactions
-        ) VALUES (
-            $1, $2, $3, NOW(), NULL, $4, $5
-        )`
+	insertQuery, insertArgs, err := sq.Insert("post_platform_stats_history").
+		Columns("team_id", "post_union_id", "platform", "period_start", "period_end", "views", "reactions").
+		Values(lastStats.TeamID, postUnionID, platform, sq.Expr("NOW()"), nil, lastStats.Views, lastStats.Reactions).
+		PlaceholderFormat(sq.Dollar).
+		ToSql()
 
-	_, err = a.db.Exec(query, lastStats.TeamID, postUnionID, platform, lastStats.Views, lastStats.Reactions)
+	if err != nil {
+		return fmt.Errorf("ошибка при формировании SQL-запроса для создания нового периода: %w", err)
+	}
+
+	_, err = a.db.Exec(insertQuery, insertArgs...)
 	if err != nil {
 		return fmt.Errorf("не удалось создать новый период статистики: %w", err)
 	}
@@ -117,57 +154,101 @@ func (a *Analytics) CreateNewPeriod(postUnionID int, platform string) error {
 }
 
 func (a *Analytics) EndPeriod(postUnionID int, platform string) error {
-	query := `
-		UPDATE post_platform_stats_history
-		SET period_end = NOW()
-		WHERE post_union_id = $1 AND platform = $2 AND period_end IS NULL
-	`
-	_, err := a.db.Exec(query, postUnionID, platform)
-	return err
+	query, args, err := sq.Update("post_platform_stats_history").
+		Set("period_end", sq.Expr("NOW()")).
+		Where(sq.Eq{"post_union_id": postUnionID}).
+		Where(sq.Eq{"platform": platform}).
+		Where(sq.Eq{"period_end": nil}).
+		PlaceholderFormat(sq.Dollar).
+		ToSql()
+
+	if err != nil {
+		return fmt.Errorf("ошибка при формировании SQL-запроса для завершения периода: %w", err)
+	}
+
+	_, err = a.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("ошибка при завершении периода: %w", err)
+	}
+
+	return nil
 }
 
 func (a *Analytics) UpdateLastPlatformStats(stats *entity.PostPlatformStats, platform string) error {
 	// Проверяем, есть ли вообще какие-то записи для этого поста
-	var exists bool
-	err := a.db.QueryRow(`
-        SELECT EXISTS(SELECT 1 FROM post_platform_stats_history 
-        WHERE post_union_id = $1 AND platform = $2)
-    `, stats.PostUnionID, platform).Scan(&exists)
+	existsQuery, existsArgs, err := sq.Select("1").
+		From("post_platform_stats_history").
+		Where(sq.Eq{"post_union_id": stats.PostUnionID}).
+		Where(sq.Eq{"platform": platform}).
+		Prefix("SELECT EXISTS(").
+		Suffix(")").
+		PlaceholderFormat(sq.Dollar).
+		ToSql()
 
 	if err != nil {
-		return fmt.Errorf("failed to check stats existence: %w", err)
+		return fmt.Errorf("ошибка при формировании SQL-запроса для проверки существования: %w", err)
+	}
+
+	var exists bool
+	err = a.db.QueryRow(existsQuery, existsArgs...).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("ошибка при проверке существования статистики: %w", err)
 	}
 
 	// Если записей нет, создаём новую
 	if !exists {
-		_, err := a.db.Exec(`
-            INSERT INTO post_platform_stats_history 
-            (team_id, post_union_id, platform, period_start, views, reactions)
-            VALUES ($1, $2, $3, NOW(), $4, $5)
-        `, stats.TeamID, stats.PostUnionID, platform, stats.Views, stats.Reactions)
-		return err
+		insertQuery, insertArgs, err := sq.Insert("post_platform_stats_history").
+			Columns("team_id", "post_union_id", "platform", "period_start", "views", "reactions").
+			Values(stats.TeamID, stats.PostUnionID, platform, sq.Expr("NOW()"), stats.Views, stats.Reactions).
+			PlaceholderFormat(sq.Dollar).
+			ToSql()
+
+		if err != nil {
+			return fmt.Errorf("ошибка при формировании SQL-запроса для создания статистики: %w", err)
+		}
+
+		_, err = a.db.Exec(insertQuery, insertArgs...)
+		if err != nil {
+			return fmt.Errorf("ошибка при создании начальной статистики: %w", err)
+		}
+		return nil
 	}
 
 	// Ищем активный период
+	activeQuery, activeArgs, err := sq.Select("id").
+		From("post_platform_stats_history").
+		Where(sq.Eq{"post_union_id": stats.PostUnionID}).
+		Where(sq.Eq{"platform": platform}).
+		Where(sq.Eq{"period_end": nil}).
+		PlaceholderFormat(sq.Dollar).
+		ToSql()
+
+	if err != nil {
+		return fmt.Errorf("ошибка при формировании SQL-запроса для поиска активного периода: %w", err)
+	}
+
 	var id int
-	err = a.db.QueryRow(`
-        SELECT id FROM post_platform_stats_history
-        WHERE post_union_id = $1 
-          AND platform = $2
-          AND period_end IS NULL
-    `, stats.PostUnionID, platform).Scan(&id)
+	err = a.db.QueryRow(activeQuery, activeArgs...).Scan(&id)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		// Нет активного периода - создаём новый на основе последней записи
-		var lastStats entity.PostPlatformStats
-		err = a.db.QueryRow(`
-            SELECT id, team_id, views, reactions FROM post_platform_stats_history
-            WHERE post_union_id = $1 AND platform = $2
-            ORDER BY period_start DESC LIMIT 1
-        `, stats.PostUnionID, platform).Scan(&lastStats.ID, &lastStats.TeamID, &lastStats.Views, &lastStats.Reactions)
+		lastStatsQuery, lastStatsArgs, err := sq.Select("id", "team_id", "views", "reactions").
+			From("post_platform_stats_history").
+			Where(sq.Eq{"post_union_id": stats.PostUnionID}).
+			Where(sq.Eq{"platform": platform}).
+			OrderBy("period_start DESC").
+			Limit(1).
+			PlaceholderFormat(sq.Dollar).
+			ToSql()
 
 		if err != nil {
-			return fmt.Errorf("failed to get last stats: %w", err)
+			return fmt.Errorf("ошибка при формировании SQL-запроса для получения последней статистики: %w", err)
+		}
+
+		var lastStats entity.PostPlatformStats
+		err = a.db.QueryRow(lastStatsQuery, lastStatsArgs...).Scan(&lastStats.ID, &lastStats.TeamID, &lastStats.Views, &lastStats.Reactions)
+		if err != nil {
+			return fmt.Errorf("ошибка при получении последней статистики: %w", err)
 		}
 
 		// Обновляем значения, если новые значения больше нуля
@@ -181,36 +262,62 @@ func (a *Analytics) UpdateLastPlatformStats(stats *entity.PostPlatformStats, pla
 			reactions = stats.Reactions
 		}
 
-		_, err = a.db.Exec(`
-            INSERT INTO post_platform_stats_history 
-            (team_id, post_union_id, platform, period_start, views, reactions)
-            VALUES ($1, $2, $3, NOW(), $4, $5)
-        `, lastStats.TeamID, stats.PostUnionID, platform, views, reactions)
-		return err
+		insertNewQuery, insertNewArgs, err := sq.Insert("post_platform_stats_history").
+			Columns("team_id", "post_union_id", "platform", "period_start", "views", "reactions").
+			Values(lastStats.TeamID, stats.PostUnionID, platform, sq.Expr("NOW()"), views, reactions).
+			PlaceholderFormat(sq.Dollar).
+			ToSql()
+
+		if err != nil {
+			return fmt.Errorf("ошибка при формировании SQL-запроса для создания нового периода: %w", err)
+		}
+
+		_, err = a.db.Exec(insertNewQuery, insertNewArgs...)
+		if err != nil {
+			return fmt.Errorf("ошибка при создании нового периода статистики: %w", err)
+		}
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("ошибка при поиске активного периода: %w", err)
 	}
 
 	// Обновляем существующую запись
-	_, err = a.db.Exec(`
-        UPDATE post_platform_stats_history
-        SET views = CASE WHEN $1 > 0 THEN $1 ELSE views END,
-            reactions = CASE WHEN $2 > 0 THEN $2 ELSE reactions END
-        WHERE id = $3
-    `, stats.Views, stats.Reactions, id)
+	updateQuery, updateArgs, err := sq.Update("post_platform_stats_history").
+		Set("views", sq.Expr("CASE WHEN ? > 0 THEN ? ELSE views END", stats.Views, stats.Views)).
+		Set("reactions", sq.Expr("CASE WHEN ? > 0 THEN ? ELSE reactions END", stats.Reactions, stats.Reactions)).
+		Where(sq.Eq{"id": id}).
+		PlaceholderFormat(sq.Dollar).
+		ToSql()
 
-	return err
+	if err != nil {
+		return fmt.Errorf("ошибка при формировании SQL-запроса для обновления статистики: %w", err)
+	}
+
+	_, err = a.db.Exec(updateQuery, updateArgs...)
+	if err != nil {
+		return fmt.Errorf("ошибка при обновлении статистики: %w", err)
+	}
+
+	return nil
 }
 
 func (a *Analytics) CommentsCount(postUnionID int) (int, error) {
-	query := `
-        SELECT COUNT(*) 
-        FROM post_comment 
-        WHERE post_union_id = $1
-    `
+	query, args, err := sq.Select("COUNT(*)").
+		From("post_comment").
+		Where(sq.Eq{"post_union_id": postUnionID}).
+		PlaceholderFormat(sq.Dollar).
+		ToSql()
+
+	if err != nil {
+		return 0, fmt.Errorf("ошибка при формировании SQL-запроса для подсчета комментариев: %w", err)
+	}
 
 	var count int
-	err := a.db.Get(&count, query, postUnionID)
+	err = a.db.Get(&count, query, args...)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("ошибка при подсчете комментариев: %w", err)
 	}
 
 	return count, nil

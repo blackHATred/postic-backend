@@ -14,6 +14,7 @@ import (
 	delivery "postic-backend/internal/delivery/http"
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/repo/cockroach"
+	"postic-backend/internal/repo/kafka"
 	"postic-backend/internal/usecase/service"
 	"postic-backend/internal/usecase/service/telegram"
 	"postic-backend/internal/usecase/service/vkontakte"
@@ -60,6 +61,10 @@ func main() {
 	}
 
 	// запускаем сервисы репозиториев (подключение к базе данных)
+	eventRepo, err := kafka.NewCommentEventKafkaRepository([]string{"localhost:9092"})
+	if err != nil {
+		log.Fatalf("Ошибка при создании Kafka репозитория: %v", err)
+	}
 	userRepo := cockroach.NewUser(DBConn)
 	teamRepo := cockroach.NewTeam(DBConn)
 	postRepo := cockroach.NewPost(DBConn)
@@ -79,16 +84,16 @@ func main() {
 		log.Fatalf("Ошибка при создании Telegram бота: %v", err)
 	}
 	telegramPostPlatformUseCase := telegram.NewTelegramPost(tgBot, postRepo, teamRepo, uploadRepo)
-	telegramCommentUseCase := telegram.NewTelegramComment(tgBot, commentRepo, teamRepo, uploadRepo)
-	telegramEventListener, err := telegram.NewTelegramEventListener(telegramBotToken, false, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo)
+	telegramCommentUseCase := telegram.NewTelegramComment(tgBot, commentRepo, teamRepo, uploadRepo, eventRepo)
+	telegramEventListener, err := telegram.NewTelegramEventListener(telegramBotToken, false, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo, eventRepo)
 	if err != nil {
 		log.Fatalf("Ошибка при создании слушателя событий Post: %v", err)
 	}
 	telegramAnalytics := telegram.NewTelegramAnalytics(teamRepo, postRepo, analyticsRepo)
 	// -- vk --
 	vkPostPlatformUseCase := vkontakte.NewPost(postRepo, teamRepo, uploadRepo)
-	vkCommentUseCase := vkontakte.NewVkontakteComment(commentRepo, teamRepo, uploadRepo)
-	vkEventListener := vkontakte.NewVKEventListener(vkontakteListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo)
+	vkCommentUseCase := vkontakte.NewVkontakteComment(commentRepo, teamRepo, uploadRepo, eventRepo)
+	vkEventListener := vkontakte.NewVKEventListener(vkontakteListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, eventRepo)
 	vkAnalytics := vkontakte.NewVkontakteAnalytics(teamRepo, postRepo, analyticsRepo)
 
 	postUseCase := service.NewPostUnion(
@@ -105,12 +110,11 @@ func main() {
 		commentRepo,
 		postRepo,
 		teamRepo,
-		telegramEventListener,
 		telegramCommentUseCase,
-		vkEventListener,
 		vkCommentUseCase,
 		summarizeURL,
 		replyIdeasURL,
+		eventRepo,
 	)
 	analyticsUseCase := service.NewAnalytics(analyticsRepo, teamRepo, postRepo, telegramAnalytics, vkAnalytics)
 

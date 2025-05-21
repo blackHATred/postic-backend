@@ -33,6 +33,7 @@ type PostUnion interface {
 }
 
 var (
+	ErrPostUnionNotFound                 = errors.New("пост не найден")
 	ErrPostUnavailableToEdit             = errors.New("пост недоступен для редактирования")
 	ErrPostTextAndAttachmentsAreRequired = errors.New("пост должен содержать текст и/или вложения")
 )

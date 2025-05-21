@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/labstack/gommon/log"
@@ -10,45 +11,38 @@ import (
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
 	"slices"
-	"sync"
 )
 
 type Comment struct {
-	commentRepo       repo.Comment
-	postRepo          repo.Post
-	teamRepo          repo.Team
-	telegramListener  usecase.Listener
-	telegramAction    usecase.CommentActionPlatform
-	vkontakteListener usecase.Listener
-	vkontakteAction   usecase.CommentActionPlatform
-	summarizeURL      string
-	replyIdeasURL     string
-	subscribers       map[entity.Subscriber]chan *entity.CommentEvent
-	mu                sync.Mutex
+	commentRepo     repo.Comment
+	postRepo        repo.Post
+	teamRepo        repo.Team
+	telegramAction  usecase.CommentActionPlatform
+	vkontakteAction usecase.CommentActionPlatform
+	summarizeURL    string
+	replyIdeasURL   string
+	eventRepo       repo.CommentEventRepository // Kafka-репозиторий событий комментариев
 }
 
 func NewComment(
 	commentRepo repo.Comment,
 	postRepo repo.Post,
 	teamRepo repo.Team,
-	telegramListener usecase.Listener,
 	telegramAction usecase.CommentActionPlatform,
-	vkontakteListener usecase.Listener,
 	vkontakteAction usecase.CommentActionPlatform,
 	summarizeURL string,
 	replyIdeasURL string,
+	eventRepo repo.CommentEventRepository,
 ) usecase.Comment {
 	return &Comment{
-		commentRepo:       commentRepo,
-		postRepo:          postRepo,
-		teamRepo:          teamRepo,
-		telegramListener:  telegramListener,
-		telegramAction:    telegramAction,
-		vkontakteListener: vkontakteListener,
-		vkontakteAction:   vkontakteAction,
-		summarizeURL:      summarizeURL,
-		replyIdeasURL:     replyIdeasURL,
-		subscribers:       make(map[entity.Subscriber]chan *entity.CommentEvent),
+		commentRepo:     commentRepo,
+		postRepo:        postRepo,
+		teamRepo:        teamRepo,
+		telegramAction:  telegramAction,
+		vkontakteAction: vkontakteAction,
+		summarizeURL:    summarizeURL,
+		replyIdeasURL:   replyIdeasURL,
+		eventRepo:       eventRepo,
 	}
 }
 
@@ -62,7 +56,7 @@ func (c *Comment) ReplyIdeas(request *entity.ReplyIdeasRequest) (*entity.ReplyId
 		return nil, usecase.ErrUserForbidden
 	}
 
-	comment, err := c.commentRepo.GetCommentInfo(request.CommentID)
+	comment, err := c.commentRepo.GetComment(request.CommentID)
 	switch {
 	case errors.Is(err, repo.ErrCommentNotFound):
 		// комментарий не найден, значит, его удалили
@@ -129,7 +123,7 @@ func (c *Comment) GetComment(request *entity.GetCommentRequest) (*entity.Comment
 		return nil, usecase.ErrUserForbidden
 	}
 
-	comment, err := c.commentRepo.GetCommentInfo(request.CommentID)
+	comment, err := c.commentRepo.GetComment(request.CommentID)
 	switch {
 	case errors.Is(err, repo.ErrCommentNotFound):
 		// комментарий не найден, значит, его удалили
@@ -241,87 +235,44 @@ func (c *Comment) GetSummarize(request *entity.SummarizeCommentRequest) (*entity
 	}, nil
 }
 
-func (c *Comment) Subscribe(request *entity.Subscriber) (<-chan *entity.CommentEvent, error) {
-	// проверяем права пользователя
+// Subscribe подписывается на получение новых комментариев через Kafka
+func (c *Comment) Subscribe(ctx context.Context, request *entity.Subscriber) (<-chan *entity.CommentEvent, error) {
+	// Проверка прав доступа пользователя
 	roles, err := c.teamRepo.GetTeamUserRoles(request.TeamID, request.UserID)
 	if err != nil {
 		return nil, err
 	}
+
+	// Проверка, имеет ли пользователь права админа или доступ к комментариям
 	if !slices.Contains(roles, repo.AdminRole) && !slices.Contains(roles, repo.CommentsRole) {
 		return nil, usecase.ErrUserForbidden
 	}
 
-	sub := entity.Subscriber{
-		UserID:      request.UserID,
-		TeamID:      request.TeamID,
-		PostUnionID: request.PostUnionID,
+	// Если указан PostUnionID, проверяем, что он принадлежит этой команде
+	if request.PostUnionID != 0 {
+		postUnion, err := c.postRepo.GetPostUnion(request.PostUnionID)
+		if err != nil {
+			if errors.Is(err, repo.ErrPostUnionNotFound) {
+				return nil, usecase.ErrPostUnionNotFound
+			}
+			return nil, err
+		}
+		if postUnion.TeamID != request.TeamID {
+			return nil, usecase.ErrUserForbidden
+		}
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Если уже есть подписка, возвращаем тот же канал
-	if oldCh, exists := c.subscribers[sub]; exists {
-		return oldCh, nil
+	// Подписываемся на события комментариев через Kafka
+	ch, err := c.eventRepo.SubscribeCommentEvents(
+		ctx,
+		request.TeamID,
+		request.PostUnionID,
+	)
+	if err != nil {
+		return nil, err
 	}
-
-	ch := make(chan *entity.CommentEvent)
-	c.subscribers[sub] = ch
-	go func() {
-		tgListenerCh := c.telegramListener.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
-		for {
-			select {
-			case comment, ok := <-tgListenerCh:
-				if !ok {
-					return
-				}
-				ch <- comment
-			}
-		}
-	}()
-	go func() {
-		tgActionCh := c.telegramAction.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
-		for {
-			select {
-			case comment, ok := <-tgActionCh:
-				if !ok {
-					return
-				}
-				ch <- comment
-			}
-		}
-	}()
-	go func() {
-		vkListenerCh := c.vkontakteListener.SubscribeToCommentEvents(sub.UserID, sub.TeamID, sub.PostUnionID)
-		for {
-			select {
-			case comment, ok := <-vkListenerCh:
-				if !ok {
-					return
-				}
-				ch <- comment
-			}
-		}
-	}()
 
 	return ch, nil
-}
-
-func (c *Comment) Unsubscribe(request *entity.Subscriber) {
-	sub := entity.Subscriber{
-		UserID:      request.UserID,
-		TeamID:      request.TeamID,
-		PostUnionID: request.PostUnionID,
-	}
-	c.mu.Lock()
-	if ch, exists := c.subscribers[sub]; exists {
-		c.telegramListener.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
-		c.telegramAction.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
-		c.vkontakteListener.UnsubscribeFromComments(sub.UserID, sub.TeamID, sub.PostUnionID)
-		close(ch)
-		delete(c.subscribers, sub)
-	}
-	c.mu.Unlock()
 }
 
 func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error) {
@@ -334,7 +285,7 @@ func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 		return 0, usecase.ErrUserForbidden
 	}
 	// получаем оригинальный комментарий
-	comment, err := c.commentRepo.GetCommentInfo(request.CommentID)
+	comment, err := c.commentRepo.GetComment(request.CommentID)
 	switch {
 	case errors.Is(err, repo.ErrCommentNotFound):
 		return 0, usecase.ErrCommentNotFound
@@ -364,7 +315,7 @@ func (c *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 		return usecase.ErrUserForbidden
 	}
 	// получаем оригинальный комментарий
-	comment, err := c.commentRepo.GetCommentInfo(request.PostCommentID)
+	comment, err := c.commentRepo.GetComment(request.PostCommentID)
 	switch {
 	case errors.Is(err, repo.ErrCommentNotFound):
 		return nil
@@ -393,7 +344,7 @@ func (c *Comment) MarkAsTicket(request *entity.MarkAsTicketRequest) error {
 		return usecase.ErrUserForbidden
 	}
 	// получаем оригинальный комментарий
-	comment, err := c.commentRepo.GetCommentInfo(request.PostCommentID)
+	comment, err := c.commentRepo.GetComment(request.PostCommentID)
 	switch {
 	case errors.Is(err, repo.ErrCommentNotFound):
 		return usecase.ErrCommentNotFound

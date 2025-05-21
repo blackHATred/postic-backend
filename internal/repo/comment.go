@@ -17,10 +17,10 @@ type Comment interface {
 	GetComments(teamID, postUnionID int, offset time.Time, before bool, limit int) ([]*entity.Comment, error)
 	// GetTicketComments возвращает комментарии, помеченные как тикет
 	GetTicketComments(teamID int, offset time.Time, before bool, limit int) ([]*entity.Comment, error)
-	// GetCommentInfo возвращает информацию о комментарии
-	GetCommentInfo(commentID int) (*entity.Comment, error)
-	// GetCommentInfoByPlatformID возвращает информацию о комментарии по ID платформы
-	GetCommentInfoByPlatformID(platformID int, platform string) (*entity.Comment, error)
+	// GetComment возвращает информацию о комментарии
+	GetComment(commentID int) (*entity.Comment, error)
+	// GetCommentByPlatformID возвращает информацию о комментарии по ID платформы
+	GetCommentByPlatformID(platformID int, platform string) (*entity.Comment, error)
 	// DeleteComment удаляет комментарий
 	DeleteComment(commentID int) error
 }

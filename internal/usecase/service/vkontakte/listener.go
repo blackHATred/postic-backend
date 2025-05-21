@@ -30,8 +30,8 @@ type EventListener struct {
 	postRepo              repo.Post
 	uploadRepo            repo.Upload
 	commentRepo           repo.Comment
-	subscribers           map[entity.Subscriber]chan *entity.CommentEvent
 	mu                    sync.Mutex
+	eventRepo             repo.CommentEventRepository // Kafka-репозиторий событий
 	lpClients             map[int]*longpoll.LongPoll
 	vkClients             map[int]*api.VK
 	stopCh                chan struct{}
@@ -44,6 +44,7 @@ func NewVKEventListener(
 	postRepo repo.Post,
 	uploadRepo repo.Upload,
 	commentRepo repo.Comment,
+	eventRepo repo.CommentEventRepository,
 ) usecase.Listener {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &EventListener{
@@ -54,7 +55,7 @@ func NewVKEventListener(
 		postRepo:              postRepo,
 		uploadRepo:            uploadRepo,
 		commentRepo:           commentRepo,
-		subscribers:           make(map[entity.Subscriber]chan *entity.CommentEvent),
+		eventRepo:             eventRepo,
 		lpClients:             make(map[int]*longpoll.LongPoll),
 		vkClients:             make(map[int]*api.VK),
 		stopCh:                make(chan struct{}),
@@ -102,12 +103,6 @@ func (e *EventListener) StopListener() {
 	for _, lp := range e.lpClients {
 		lp.Shutdown()
 	}
-
-	// Закрываем все каналы подписчиков
-	for _, ch := range e.subscribers {
-		close(ch)
-	}
-	e.subscribers = make(map[entity.Subscriber]chan *entity.CommentEvent)
 	e.mu.Unlock()
 
 	close(e.stopCh)
@@ -153,7 +148,7 @@ func (e *EventListener) checkForUnwatchedGroups() {
 			e.vkClients[teamID] = vk
 
 			go func(teamID int, lp *longpoll.LongPoll) {
-				err := lp.Run()
+				err := lp.RunWithContext(e.ctx)
 				if err != nil {
 					log.Errorf("Longpoll for team %d stopped with error: %e", teamID, err)
 					e.mu.Lock()
@@ -227,7 +222,7 @@ func (e *EventListener) wallReplyNewHandler(ctx context.Context, obj events.Wall
 
 	// Возможно, это реплай на один из существующих комментариев
 	if obj.ReplyToComment != 0 {
-		replyComment, err := e.commentRepo.GetCommentInfoByPlatformID(obj.ReplyToComment, "vk")
+		replyComment, err := e.commentRepo.GetCommentByPlatformID(obj.ReplyToComment, "vk")
 		if err != nil {
 			log.Errorf("Failed to get comment: %v", err)
 			return
@@ -270,7 +265,15 @@ func (e *EventListener) wallReplyNewHandler(ctx context.Context, obj events.Wall
 	}
 
 	// Уведомляем подписчиков о новом комментарии
-	err = e.notifySubscribers(commentID, postPlatform.PostUnionId, teamID, "new")
+	event := &entity.CommentEvent{
+		EventID:    fmt.Sprintf("vk-%d-%d", teamID, commentID),
+		TeamID:     teamID,
+		PostID:     postPlatform.PostUnionId,
+		Type:       entity.CommentCreated,
+		CommentID:  commentID,
+		OccurredAt: newComment.CreatedAt,
+	}
+	err = e.eventRepo.PublishCommentEvent(ctx, event)
 	if err != nil {
 		log.Errorf("Failed to notify subscribers: %v", err)
 	}
@@ -278,7 +281,7 @@ func (e *EventListener) wallReplyNewHandler(ctx context.Context, obj events.Wall
 
 func (e *EventListener) wallReplyDeleteHandler(ctx context.Context, obj events.WallReplyDeleteObject, teamID int) {
 	// Находим комментарий в нашей БД
-	comment, err := e.commentRepo.GetCommentInfoByPlatformID(obj.ID, "vk")
+	comment, err := e.commentRepo.GetCommentByPlatformID(obj.ID, "vk")
 	if errors.Is(err, repo.ErrCommentNotFound) {
 		return // Комментарий не найден, так что ничего не делаем
 	}
@@ -299,15 +302,22 @@ func (e *EventListener) wallReplyDeleteHandler(ctx context.Context, obj events.W
 	if comment.PostUnionID != nil {
 		postUnionID = *comment.PostUnionID
 	}
-
-	err = e.notifySubscribers(comment.ID, postUnionID, comment.TeamID, "deleted")
+	event := &entity.CommentEvent{
+		EventID:    fmt.Sprintf("vk-%d-%d", teamID, comment.ID),
+		TeamID:     teamID,
+		PostID:     postUnionID,
+		Type:       entity.CommentDeleted,
+		CommentID:  comment.ID,
+		OccurredAt: time.Now(),
+	}
+	err = e.eventRepo.PublishCommentEvent(ctx, event)
 	if err != nil {
 		log.Errorf("Failed to notify subscribers: %v", err)
 	}
 }
 
 func (e *EventListener) wallReplyEditHandler(ctx context.Context, obj events.WallReplyEditObject, teamID int) {
-	comment, err := e.commentRepo.GetCommentInfoByPlatformID(obj.ID, "vk")
+	comment, err := e.commentRepo.GetCommentByPlatformID(obj.ID, "vk")
 	if errors.Is(err, repo.ErrCommentNotFound) {
 		return // Комментарий не найден, ничего не делаем
 	}
@@ -350,8 +360,15 @@ func (e *EventListener) wallReplyEditHandler(ctx context.Context, obj events.Wal
 	if comment.PostUnionID != nil {
 		postUnionID = *comment.PostUnionID
 	}
-
-	err = e.notifySubscribers(comment.ID, postUnionID, comment.TeamID, "edited")
+	event := &entity.CommentEvent{
+		EventID:    fmt.Sprintf("vk-%d-%d", teamID, comment.ID),
+		TeamID:     teamID,
+		PostID:     postUnionID,
+		Type:       entity.CommentEdited,
+		CommentID:  comment.ID,
+		OccurredAt: time.Now(),
+	}
+	err = e.eventRepo.PublishCommentEvent(ctx, event)
 	if err != nil {
 		log.Errorf("Failed to notify subscribers: %v", err)
 	}
@@ -359,7 +376,7 @@ func (e *EventListener) wallReplyEditHandler(ctx context.Context, obj events.Wal
 
 func (e *EventListener) wallReplyRestoreHandler(ctx context.Context, obj events.WallReplyRestoreObject, teamID int) {
 	// Это аналогично новому комментарию, но сначала проверяем, существует ли он уже
-	existingComment, err := e.commentRepo.GetCommentInfoByPlatformID(obj.ID, "vk")
+	existingComment, err := e.commentRepo.GetCommentByPlatformID(obj.ID, "vk")
 	if err == nil {
 		// Комментарий существует, просто помечаем его как активный
 		// Для этого просто обновляем его текст
@@ -420,7 +437,15 @@ func (e *EventListener) wallReplyRestoreHandler(ctx context.Context, obj events.
 	}
 
 	// Уведомляем подписчиков о новом комментарии (даже несмотря на то, что он восстановленный)
-	err = e.notifySubscribers(commentID, postPlatform.PostUnionId, teamID, "new")
+	event := &entity.CommentEvent{
+		EventID:    fmt.Sprintf("vk-%d-%d", teamID, commentID),
+		TeamID:     teamID,
+		PostID:     postPlatform.PostUnionId,
+		Type:       entity.CommentCreated,
+		CommentID:  commentID,
+		OccurredAt: newComment.CreatedAt,
+	}
+	err = e.eventRepo.PublishCommentEvent(ctx, event)
 	if err != nil {
 		log.Errorf("Failed to notify subscribers: %v", err)
 	}
@@ -475,7 +500,7 @@ func (e *EventListener) processVKAttachments(attachments []object.WallCommentAtt
 		case "video":
 			if attachment.Video.Player == "" {
 				// Собираем ссылку вручную
-				url = fmt.Sprintf("https://vk.com/video%d_%d", attachment.Video.OwnerID, attachment.Video.ID)
+				url = fmt.Sprintf(vkVideoBaseURL, attachment.Video.OwnerID, attachment.Video.ID)
 			} else {
 				url = attachment.Video.Player
 			}
@@ -519,7 +544,7 @@ func (e *EventListener) processVKAttachments(attachments []object.WallCommentAtt
 
 		// Сохраняем в S3
 		upload := &entity.Upload{
-			RawBytes: io.NopCloser(&buf),
+			RawBytes: bytes.NewReader(buf.Bytes()),
 			FilePath: fmt.Sprintf("vk/%s.%s", uuid.New().String(), extension),
 			FileType: fileType,
 		}
@@ -542,9 +567,17 @@ func (e *EventListener) getUserAvatar(avatarUrl string) (*entity.Upload, error) 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// Читаем содержимое в буфер
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Errorf("Failed to read response body: %v", err)
+		return nil, err
+	}
+	_ = resp.Body.Close()
+
 	extension := "jpg"
 	upload := &entity.Upload{
-		RawBytes: resp.Body,
+		RawBytes: bytes.NewReader(body),
 		FilePath: fmt.Sprintf("vk/%s.%s", uuid.New().String(), extension),
 		FileType: "photo",
 	}
@@ -557,83 +590,4 @@ func (e *EventListener) getUserAvatar(avatarUrl string) (*entity.Upload, error) 
 	return upload, nil
 }
 
-func (e *EventListener) SubscribeToCommentEvents(userID, teamID, postUnionID int) <-chan *entity.CommentEvent {
-	// Создаем подписчика
-	sub := entity.Subscriber{
-		UserID:      userID,
-		TeamID:      teamID,
-		PostUnionID: postUnionID,
-	}
-
-	// Блокируем доступ к мьютексу для безопасного изменения карты подписчиков
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	// Если подписчик уже существует, возвращаем существующий канал
-	if ch, ok := e.subscribers[sub]; ok {
-		return ch
-	}
-
-	// Создаем новый канал для подписчика
-	ch := make(chan *entity.CommentEvent)
-	e.subscribers[sub] = ch
-	return ch
-}
-
-func (e *EventListener) UnsubscribeFromComments(userID, teamID, postUnionID int) {
-	// Создаем подписчика
-	sub := entity.Subscriber{
-		UserID:      userID,
-		TeamID:      teamID,
-		PostUnionID: postUnionID,
-	}
-
-	// Блокируем доступ к мьютексу для безопасного изменения карты подписчиков
-	e.mu.Lock()
-	// Если подписчик существует, закрываем канал и удаляем его из карты
-	if ch, ok := e.subscribers[sub]; ok {
-		close(ch)
-		delete(e.subscribers, sub)
-	}
-	e.mu.Unlock()
-}
-
-func (e *EventListener) notifySubscribers(commentID, postUnionID, teamID int, eventType string) error {
-	// Смотрим, какие участники есть в команде
-	teamMemberIDs, err := e.teamRepo.GetTeamUsers(teamID)
-	if err != nil {
-		log.Errorf("Failed to get team members: %v", err)
-		return err
-	}
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	for _, memberID := range teamMemberIDs {
-		sub := entity.Subscriber{
-			UserID:      memberID,
-			TeamID:      teamID,
-			PostUnionID: 0,
-		}
-		if ch, ok := e.subscribers[sub]; ok {
-			go func() {
-				ch <- &entity.CommentEvent{
-					CommentID: commentID,
-					Type:      eventType,
-				}
-			}()
-		}
-		// также возможен вариант, когда подписка осуществлена под конкретный пост
-		if postUnionID != 0 {
-			sub.PostUnionID = postUnionID
-			if ch, ok := e.subscribers[sub]; ok {
-				go func() {
-					ch <- &entity.CommentEvent{
-						CommentID: commentID,
-						Type:      eventType,
-					}
-				}()
-			}
-		}
-	}
-	return nil
-}
+var vkVideoBaseURL = "https://vk.com/video%d_%d"

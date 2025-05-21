@@ -50,4 +50,5 @@ type Post interface {
 
 var (
 	ErrPostPlatformNotFound = errors.New("post platform not found")
+	ErrPostUnionNotFound    = errors.New("post union not found")
 )
