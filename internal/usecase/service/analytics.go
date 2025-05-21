@@ -92,36 +92,106 @@ func (a *Analytics) GetStats(request *entity.GetStatsRequest) (*entity.StatsResp
 	}
 
 	platforms := []string{"tg", "vk"}
-	allStats := make([]*entity.PostPlatformStats, 0)
+	postsMap := make(map[int]*entity.PostStats) // Карта для группировки статистики по postUnionID
+
 	for _, platform := range platforms {
-		stats, err := a.analyticsRepo.GetPostPlatformStatsByPeriod(request.Start, request.End, platform)
-		if err != nil {
-			return nil, err
+		// Получаем статистику на начало периода (ближайшая к request.Start)
+		statsStart, err := a.analyticsRepo.GetPostPlatformStatsByNearestDate(request.Start, platform, false)
+		if err != nil && !errors.Is(err, repo.ErrPostPlatformStatsNotFound) {
+			return nil, fmt.Errorf("ошибка получения статистики на начало периода: %w", err)
 		}
-		if stats != nil {
-			allStats = append(allStats, stats)
+
+		// Получаем статистику на конец периода (ближайшая к request.End)
+		statsEnd, err := a.analyticsRepo.GetPostPlatformStatsByNearestDate(request.End, platform, true)
+		if err != nil && !errors.Is(err, repo.ErrPostPlatformStatsNotFound) {
+			return nil, fmt.Errorf("ошибка получения статистики на конец периода: %w", err)
+		}
+
+		// Если нет статистики на начало или конец периода, пропускаем
+		if errors.Is(err, repo.ErrPostPlatformStatsNotFound) {
+			continue
+		}
+
+		// Группируем статистику по postUnionID и вычисляем разницу
+		startStatsMap := make(map[int]*entity.PostPlatformStats)
+		for _, stat := range statsStart {
+			startStatsMap[stat.PostUnionID] = stat
+		}
+
+		for _, endStat := range statsEnd {
+			// Создаем объект статистики для периода
+			periodStats := &entity.PostPlatformStats{
+				TeamID:      endStat.TeamID,
+				PostUnionID: endStat.PostUnionID,
+				Platform:    endStat.Platform,
+				PeriodStart: request.Start,
+				PeriodEnd:   &request.End,
+				Views:       endStat.Views,
+				Reactions:   endStat.Reactions,
+				Comments:    endStat.Comments,
+			}
+
+			// Если есть статистика на начало периода, вычитаем её
+			if startStat, exists := startStatsMap[endStat.PostUnionID]; exists {
+				periodStats.Views = endStat.Views - startStat.Views
+				periodStats.Reactions = endStat.Reactions - startStat.Reactions
+
+				// Для комментариев нам нужно получить точное количество за период
+				comments, err := a.analyticsRepo.GetCommentsCountByPeriod(endStat.PostUnionID, request.Start, request.End)
+				if err != nil {
+					return nil, fmt.Errorf("ошибка получения комментариев за период: %w", err)
+				}
+				periodStats.Comments = comments
+			} else {
+				// Если нет статистики на начало, считаем все комментарии до конца периода
+				comments, err := a.analyticsRepo.GetCommentsCountByPeriod(endStat.PostUnionID, time.Time{}, request.End)
+				if err != nil {
+					return nil, fmt.Errorf("ошибка получения комментариев за период: %w", err)
+				}
+				periodStats.Comments = comments
+			}
+
+			// Обеспечиваем, чтобы значения не были отрицательными
+			if periodStats.Views < 0 {
+				periodStats.Views = 0
+			}
+			if periodStats.Reactions < 0 {
+				periodStats.Reactions = 0
+			}
+
+			// Создаём объект с данными платформы
+			platformStats := &entity.PlatformStats{
+				Views:     periodStats.Views,
+				Comments:  periodStats.Comments,
+				Reactions: periodStats.Reactions,
+			}
+
+			// Проверяем, есть ли уже запись для этого поста
+			postStats, exists := postsMap[periodStats.PostUnionID]
+			if !exists {
+				// Создаем новую запись, если её еще нет
+				postStats = &entity.PostStats{
+					PostUnionID: periodStats.PostUnionID,
+				}
+				postsMap[periodStats.PostUnionID] = postStats
+			}
+
+			// Добавляем статистику для соответствующей платформы
+			switch periodStats.Platform {
+			case "tg":
+				postStats.Telegram = platformStats
+			case "vk":
+				postStats.Vkontakte = platformStats
+			}
 		}
 	}
 
-	// составляем ответ
-	posts := make([]*entity.PostStats, len(allStats))
-	for i, postPlatformStats := range allStats {
-		go a.beginNewPeriod(postPlatformStats.PostUnionID, postPlatformStats.Platform)
-		platformStats := &entity.PlatformStats{
-			Views:     postPlatformStats.Views,
-			Comments:  postPlatformStats.Comments,
-			Reactions: postPlatformStats.Reactions,
-		}
-		posts[i] = &entity.PostStats{
-			PostUnionID: postPlatformStats.PostUnionID,
-		}
-		switch postPlatformStats.Platform {
-		case "tg":
-			posts[i].Telegram = platformStats
-		case "vk":
-			posts[i].Vkontakte = platformStats
-		}
+	// Преобразуем карту в массив для ответа
+	posts := make([]*entity.PostStats, 0, len(postsMap))
+	for _, postStats := range postsMap {
+		posts = append(posts, postStats)
 	}
+
 	return &entity.StatsResponse{
 		Posts: posts,
 	}, nil

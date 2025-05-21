@@ -54,41 +54,6 @@ func (a *Analytics) GetPostPlatformStatsByPostUnionID(postUnionID int, platform 
 	return stats, nil
 }
 
-func (a *Analytics) GetPostPlatformStatsByPeriod(startDate, endDate time.Time, platform string) ([]*entity.PostPlatformStats, error) {
-	query, args, err := sq.Select("id", "team_id", "post_union_id", "period_start", "period_end", "platform", "views", "reactions").
-		From("post_platform_stats_history").
-		Where(sq.Eq{"platform": platform}).
-		Where(sq.Gt{"period_start": startDate}).
-		Where(sq.Or{
-			sq.Eq{"period_end": nil},
-			sq.Lt{"period_end": endDate},
-		}).
-		OrderBy("period_start DESC").
-		PlaceholderFormat(sq.Dollar).
-		ToSql()
-
-	if err != nil {
-		return nil, fmt.Errorf("ошибка при формировании SQL-запроса: %w", err)
-	}
-
-	var stats []*entity.PostPlatformStats
-	err = a.db.Select(&stats, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка при получении статистики по периоду: %w", err)
-	}
-
-	// Получаем количество комментариев для каждого поста
-	for _, stat := range stats {
-		comments, err := a.CommentsCount(stat.PostUnionID)
-		if err != nil {
-			return nil, fmt.Errorf("ошибка при получении количества комментариев для поста %d: %w", stat.PostUnionID, err)
-		}
-		stat.Comments = comments
-	}
-
-	return stats, nil
-}
-
 func (a *Analytics) CreateNewPeriod(postUnionID int, platform string) error {
 	// Получаем последнюю статистику
 	lastStats, err := a.GetPostPlatformStatsByPostUnionID(postUnionID, platform)
@@ -318,6 +283,211 @@ func (a *Analytics) CommentsCount(postUnionID int) (int, error) {
 	err = a.db.Get(&count, query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("ошибка при подсчете комментариев: %w", err)
+	}
+
+	return count, nil
+}
+
+func (a *Analytics) GetUserKPI(userID int, startDate, endDate time.Time) (*entity.UserKPI, error) {
+	// Получаем все посты пользователя за указанный период
+	queryPosts := `
+		SELECT id
+		FROM post_union
+		WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3
+	`
+	var postIDs []int
+	err := a.db.Select(&postIDs, queryPosts, userID, startDate, endDate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get posts for user: %w", err)
+	}
+
+	if len(postIDs) == 0 {
+		return &entity.UserKPI{UserID: userID, KPI: 0, Views: 0, Reactions: 0, Comments: 0}, nil // Нет постов за указанный период
+	}
+
+	// Инициализируем метрики
+	var totalViews, totalReactions, totalComments int
+
+	// Считаем статистику по каждому посту
+	for _, postID := range postIDs {
+		// Получаем просмотры и реакции из post_platform_stats_history
+		queryStats := `
+			SELECT COALESCE(SUM(views), 0) AS views, COALESCE(SUM(reactions), 0) AS reactions
+			FROM post_platform_stats_history
+			WHERE post_union_id = $1 AND period_start >= $2 AND (period_end <= $3 OR period_end IS NULL)
+		`
+		var views, reactions int
+		err := a.db.QueryRow(queryStats, postID, startDate, endDate).Scan(&views, &reactions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get stats for post %d: %w", postID, err)
+		}
+
+		// Получаем количество комментариев из post_comment
+		queryComments := `
+			SELECT COUNT(*)
+			FROM post_comment
+			WHERE post_union_id = $1 AND created_at >= $2 AND created_at <= $3
+		`
+		var comments int
+		err = a.db.QueryRow(queryComments, postID, startDate, endDate).Scan(&comments)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get comments for post %d: %w", postID, err)
+		}
+
+		// Суммируем метрики
+		totalViews += views
+		totalReactions += reactions
+		totalComments += comments
+	}
+
+	// Рассчитываем KPI
+	const (
+		weightViews     = 0.1
+		weightReactions = 0.3
+		weightComments  = 1.2
+	)
+	kpi := float64(totalViews)*weightViews + float64(totalReactions)*weightReactions + float64(totalComments)*weightComments
+
+	return &entity.UserKPI{
+		UserID:    userID,
+		KPI:       kpi,
+		Views:     totalViews,
+		Reactions: totalReactions,
+		Comments:  totalComments,
+	}, nil
+}
+
+func (a *Analytics) CompareUserKPI(userIDs []int, startDate, endDate time.Time) (map[int]*entity.UserKPI, error) {
+	kpiResults := make(map[int]*entity.UserKPI)
+
+	for _, userID := range userIDs {
+		kpi, err := a.GetUserKPI(userID, startDate, endDate)
+		if err != nil {
+			return nil, fmt.Errorf("failed to calculate KPI for user %d: %w", userID, err)
+		}
+		kpiResults[userID] = kpi
+	}
+
+	return kpiResults, nil
+}
+
+func (a *Analytics) GetPostPlatformStatsByNearestDate(date time.Time, platform string, before bool) ([]*entity.PostPlatformStats, error) {
+	var query string
+	var args []interface{}
+	var err error
+
+	if before {
+		// Ближайшие записи ДО указанной даты
+		query, args, err = sq.Select("id", "team_id", "post_union_id", "period_start", "period_end", "platform", "views", "reactions").
+			From("post_platform_stats_history").
+			Where(sq.Eq{"platform": platform}).
+			Where(sq.LtOrEq{"period_start": date}).
+			GroupBy("post_union_id, id, team_id, period_start, period_end, platform, views, reactions").
+			OrderBy("post_union_id", "period_start DESC").
+			PlaceholderFormat(sq.Dollar).
+			ToSql()
+	} else {
+		// Ближайшие записи ПОСЛЕ указанной даты или равные ей
+		query, args, err = sq.Select("id", "team_id", "post_union_id", "period_start", "period_end", "platform", "views", "reactions").
+			From("post_platform_stats_history").
+			Where(sq.Eq{"platform": platform}).
+			Where(sq.GtOrEq{"period_start": date}).
+			GroupBy("post_union_id, id, team_id, period_start, period_end, platform, views, reactions").
+			OrderBy("post_union_id", "period_start ASC").
+			PlaceholderFormat(sq.Dollar).
+			ToSql()
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("ошибка при формировании SQL-запроса: %w", err)
+	}
+
+	var allStats []*entity.PostPlatformStats
+	err = a.db.Select(&allStats, query, args...)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, repo.ErrPostPlatformStatsNotFound
+		}
+		return nil, fmt.Errorf("ошибка при получении статистики: %w", err)
+	}
+
+	if len(allStats) == 0 {
+		return nil, repo.ErrPostPlatformStatsNotFound
+	}
+
+	// Группируем статистику по postUnionID и выбираем ближайшую запись
+	postUnionStats := make(map[int]*entity.PostPlatformStats)
+	for _, stats := range allStats {
+		// Если это первая запись для данного поста или это более близкая к дате запись
+		if existing, exists := postUnionStats[stats.PostUnionID]; !exists {
+			postUnionStats[stats.PostUnionID] = stats
+		} else {
+			// Выбираем запись ближе к указанной дате
+			if before {
+				// Для статистики "до даты" выбираем самую позднюю (ближайшую к указанной дате)
+				if stats.PeriodStart.After(existing.PeriodStart) {
+					postUnionStats[stats.PostUnionID] = stats
+				}
+			} else {
+				// Для статистики "после даты" выбираем самую раннюю (ближайшую к указанной дате)
+				if stats.PeriodStart.Before(existing.PeriodStart) {
+					postUnionStats[stats.PostUnionID] = stats
+				}
+			}
+		}
+	}
+
+	// Получаем количество комментариев для каждой статистики
+	result := make([]*entity.PostPlatformStats, 0, len(postUnionStats))
+	for _, stats := range postUnionStats {
+		comments, err := a.CommentsCount(stats.PostUnionID)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка при получении количества комментариев для поста %d: %w", stats.PostUnionID, err)
+		}
+		stats.Comments = comments
+		result = append(result, stats)
+	}
+
+	if len(result) == 0 {
+		return nil, repo.ErrPostPlatformStatsNotFound
+	}
+
+	return result, nil
+}
+
+func (a *Analytics) GetCommentsCountByPeriod(postUnionID int, startDate, endDate time.Time) (int, error) {
+	// Формируем условие для диапазона дат
+	var query string
+	var args []interface{}
+	var err error
+
+	// Если начальная дата не указана (нулевая), то считаем комментарии с начала времени до endDate
+	if startDate.IsZero() {
+		query, args, err = sq.Select("COUNT(*)").
+			From("post_comment").
+			Where(sq.Eq{"post_union_id": postUnionID}).
+			Where(sq.LtOrEq{"created_at": endDate}).
+			PlaceholderFormat(sq.Dollar).
+			ToSql()
+	} else {
+		// Иначе считаем комментарии между startDate и endDate
+		query, args, err = sq.Select("COUNT(*)").
+			From("post_comment").
+			Where(sq.Eq{"post_union_id": postUnionID}).
+			Where(sq.GtOrEq{"created_at": startDate}).
+			Where(sq.LtOrEq{"created_at": endDate}).
+			PlaceholderFormat(sq.Dollar).
+			ToSql()
+	}
+
+	if err != nil {
+		return 0, fmt.Errorf("ошибка при формировании SQL-запроса для подсчета комментариев за период: %w", err)
+	}
+
+	var count int
+	err = a.db.Get(&count, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка при подсчете комментариев за период: %w", err)
 	}
 
 	return count, nil

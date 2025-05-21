@@ -514,7 +514,11 @@ func (t *EventListener) handleComment(update *models.Update) error {
 		existingComment.Attachments, err = t.processAttachments(update)
 		if err != nil {
 			log.Errorf("Failed to process attachments: %v", err)
-			return err
+			// не возвращаем ошибку, а просто добавляем в текст комментария информацию о том, что отправитель
+			// прикрепил какие-то файлы
+			existingComment.Text += "\n\n[⚠️ Пользователь прикрепил к комментарию файлы, но не удалось их обработать]"
+			existingComment.Text = strings.TrimSpace(existingComment.Text)
+			// return err
 		}
 		// Если так вышло, что у сообщения по каким-то причинам нет текста и аттачей, то игнорируем его
 		if existingComment.Text == "" && len(existingComment.Attachments) == 0 {
@@ -600,7 +604,11 @@ func (t *EventListener) handleComment(update *models.Update) error {
 	newComment.Attachments, err = t.processAttachments(update)
 	if err != nil {
 		log.Errorf("Failed to process attachments: %v", err)
-		return err
+		// не возвращаем ошибку, а просто добавляем в текст комментария информацию о том, что отправитель
+		// прикрепил какие-то файлы
+		newComment.Text += "\n\n[⚠️ Пользователь прикрепил к комментарию файлы, но не удалось их обработать]"
+		newComment.Text = strings.TrimSpace(newComment.Text)
+		// return err
 	}
 	// Если так вышло, что у сообщения по каким-то причинам нет текста и аттачей, то игнорируем его
 	if newComment.Text == "" && len(newComment.Attachments) == 0 {
