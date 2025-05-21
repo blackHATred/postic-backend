@@ -1,7 +1,6 @@
 package telegram
 
 import (
-	"errors"
 	"fmt"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
@@ -27,39 +26,23 @@ func NewTelegramAnalytics(
 	}
 }
 
-func (a *Analytics) UpdateStat(postUnionID int) (*entity.PlatformStats, error) {
+func (a *Analytics) UpdateStat(postUnionID int) error {
 	// Получаем пост по ID
 	post, err := a.postRepo.GetPostUnion(postUnionID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get post by ID: %w", err)
+		return fmt.Errorf("failed to get post by ID: %w", err)
 	}
 
-	// Получаем статистику по посту
-	stats, err := a.analyticsRepo.GetPostPlatformStatsByPostUnionID(postUnionID, "tg")
-	switch {
-	case errors.Is(err, repo.ErrPostPlatformStatsNotFound):
-		// не нашли, в таком случае просто создаем новую статистику и возвращаем её
-		stats = &entity.PostPlatformStats{
-			PostUnionID: postUnionID,
-			Platform:    "tg",
-			TeamID:      post.TeamID,
-			Views:       0,
-			Comments:    0,
-			Reactions:   0,
-			LastUpdate:  time.Now(),
-		}
-		err = a.analyticsRepo.AddPostPlatformStats(stats)
-		if err != nil {
-			return nil, fmt.Errorf("failed to add post platform stats: %w", err)
-		}
-	case err != nil:
-		return nil, fmt.Errorf("failed to get post platform stats: %w", err)
+	stats := &entity.PostPlatformStats{
+		TeamID:      post.TeamID,
+		PostUnionID: postUnionID,
+		Platform:    "tg",
 	}
 
 	// Получаем количество комментариев к посту
 	commentsCount, err := a.analyticsRepo.CommentsCount(postUnionID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get comments count: %w", err)
+		return fmt.Errorf("failed to get comments count: %w", err)
 	}
 	stats.Comments = commentsCount
 
@@ -68,31 +51,23 @@ func (a *Analytics) UpdateStat(postUnionID int) (*entity.PlatformStats, error) {
 	if post.PubDate != nil {
 		start = *post.PubDate
 	}
-	views := EstimateViews(stats.Reactions, time.Since(start).Hours())
+	views := EstimateViews(stats.Reactions, stats.Comments, time.Since(start).Hours())
 	stats.Views = views
 
 	// Обновляем статистику
-	err = a.analyticsRepo.EditPostPlatformStats(stats)
+	err = a.analyticsRepo.UpdateLastPlatformStats(stats, "tg")
 	if err != nil {
-		return nil, fmt.Errorf("failed to edit post platform stats: %w", err)
+		return fmt.Errorf("failed to edit post platform stats: %w", err)
 	}
 
-	return &entity.PlatformStats{
-		Views:     stats.Views,
-		Comments:  stats.Comments,
-		Reactions: stats.Reactions,
-	}, nil
+	return nil
 }
 
-func EstimateViews(reactions int, hoursPassed float64) int {
-	if reactions == 0 {
-		return 0
-	}
+func EstimateViews(reactions int, comments int, hoursPassed float64) int {
+	// Общий CTR для расчёта, по умолчанию 4%
+	ctr := 0.04
 
-	// Примерный CTR, характерный для большинства каналов — от 3% до 5%
-	ctr := 0.04 // например, 4%
-
-	// Временной множитель
+	// Коэффициент времени
 	timeFactor := 1.0
 	switch {
 	case hoursPassed < 1:
@@ -105,6 +80,16 @@ func EstimateViews(reactions int, hoursPassed float64) int {
 		timeFactor = 1.0
 	}
 
-	estimatedViews := (float64(reactions) / ctr) * timeFactor
+	// Если комментариев нет, используем старую формулу
+	if comments == 0 {
+		return int((float64(reactions) / ctr) * timeFactor)
+	}
+
+	// Если комментарии есть, учитываем их при расчёте
+	// Можно варьировать веса для реакций и комментариев
+	reactionsWeight := float64(reactions) * 0.7
+	commentsWeight := float64(comments) * 0.3
+	estimatedViews := (reactionsWeight + commentsWeight) / ctr * timeFactor
+
 	return int(estimatedViews)
 }

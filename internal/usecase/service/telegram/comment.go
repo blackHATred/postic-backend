@@ -1,7 +1,8 @@
 package telegram
 
 import (
-	"errors"
+	"context"
+	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/labstack/gommon/log"
 	"postic-backend/internal/entity"
@@ -9,7 +10,6 @@ import (
 	"postic-backend/internal/usecase"
 	"postic-backend/pkg/retry"
 	"slices"
-	"sync"
 	"time"
 )
 
@@ -18,8 +18,7 @@ type Comment struct {
 	commentRepo repo.Comment
 	teamRepo    repo.Team
 	uploadRepo  repo.Upload
-	subscribers map[entity.Subscriber]chan *entity.CommentEvent
-	mu          sync.Mutex
+	eventRepo   repo.CommentEventRepository
 }
 
 func NewTelegramComment(
@@ -27,13 +26,14 @@ func NewTelegramComment(
 	commentRepo repo.Comment,
 	teamRepo repo.Team,
 	uploadRepo repo.Upload,
-) usecase.CommentActionPlatform {
+	eventRepo repo.CommentEventRepository,
+) *Comment {
 	return &Comment{
 		bot:         bot,
 		commentRepo: commentRepo,
 		teamRepo:    teamRepo,
 		uploadRepo:  uploadRepo,
-		subscribers: make(map[entity.Subscriber]chan *entity.CommentEvent),
+		eventRepo:   eventRepo,
 	}
 }
 
@@ -50,23 +50,23 @@ func (t *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 
 	// Получаем информацию о канале дискуссий
 	teamID := request.TeamID
-	_, discussionID, err := t.teamRepo.GetTGChannelByTeamID(teamID)
+	tgChannel, err := t.teamRepo.GetTGChannelByTeamID(teamID)
 	if err != nil {
 		return 0, err
 	}
-	if discussionID == 0 {
+	if tgChannel.DiscussionID == nil || *tgChannel.DiscussionID == 0 {
 		return 0, usecase.ErrReplyCommentUnavailable
 	}
 
 	// Получаем оригинальное сообщение
-	originalMsg, err := t.commentRepo.GetCommentInfo(request.CommentID)
+	originalMsg, err := t.commentRepo.GetComment(request.CommentID)
 	if err != nil {
 		return 0, err
 	}
 
 	// Переменная для хранения отправленного сообщения
 	var sentMsg tgbotapi.Message
-	chatID := int64(discussionID)
+	chatID := int64(*tgChannel.DiscussionID)
 
 	// Проверяем наличие вложений
 	if len(request.Attachments) > 0 {
@@ -166,7 +166,7 @@ func (t *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 		}
 
 		// Удаляем только что отправленное сообщение
-		deleteMsg := tgbotapi.NewDeleteMessage(int64(discussionID), sentMsg.MessageID)
+		deleteMsg := tgbotapi.NewDeleteMessage(int64(*tgChannel.DiscussionID), sentMsg.MessageID)
 		err = retry.Retry(func() error {
 			_, err := t.bot.Request(deleteMsg)
 			return err
@@ -215,25 +215,41 @@ func (t *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 		return 0, err
 	}
 
+	// Публикуем событие о новом комментарии в Kafka
+	event := &entity.CommentEvent{
+		EventID:    fmt.Sprintf("tg-%d-%d", comment.TeamID, commentID),
+		TeamID:     comment.TeamID,
+		PostID:     derefInt(comment.PostUnionID),
+		Type:       entity.CommentCreated,
+		CommentID:  commentID,
+		OccurredAt: comment.CreatedAt,
+	}
+	if err := t.eventRepo.PublishCommentEvent(context.Background(), event); err != nil {
+		log.Errorf("Не удалось опубликовать событие о новом комментарии в Kafka: %v", err)
+	}
+
 	return commentID, nil
 }
 
 // DeleteComment удаляет комментарий
 func (t *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 	// Получаем информацию о комментарии
-	comment, err := t.commentRepo.GetCommentInfo(request.PostCommentID)
+	comment, err := t.commentRepo.GetComment(request.PostCommentID)
 	if err != nil {
 		return err
 	}
 
 	// Получаем информацию о канале дискуссий
-	_, discussionID, err := t.teamRepo.GetTGChannelByTeamID(request.TeamID)
+	tgChannel, err := t.teamRepo.GetTGChannelByTeamID(request.TeamID)
 	if err != nil {
 		return err
 	}
 
+	if tgChannel.DiscussionID == nil || *tgChannel.DiscussionID == 0 {
+		return nil
+	}
 	// Создаем запрос на удаление сообщения
-	deleteMsg := tgbotapi.NewDeleteMessage(int64(discussionID), comment.CommentPlatformID)
+	deleteMsg := tgbotapi.NewDeleteMessage(int64(*tgChannel.DiscussionID), comment.CommentPlatformID)
 
 	// Пробуем удалить сообщение с повторами в случае ошибки
 	err = retry.Retry(func() error {
@@ -245,10 +261,26 @@ func (t *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 		return err
 	}
 
-	// Помечаем комментарий как удаленный в БД или удаляем его
+	// Помечаем комментарий как удаленный в БД
 	err = t.commentRepo.DeleteComment(request.PostCommentID)
 	if err != nil {
 		log.Errorf("Failed to mark comment as deleted: %v", err)
+	}
+
+	// Публикуем событие об удалении комментария в Kafka
+	comment, _ = t.commentRepo.GetComment(request.PostCommentID)
+	if comment != nil {
+		event := &entity.CommentEvent{
+			EventID:    fmt.Sprintf("tg-del-%d-%d", comment.TeamID, comment.ID),
+			TeamID:     comment.TeamID,
+			PostID:     derefInt(comment.PostUnionID),
+			Type:       entity.CommentDeleted,
+			CommentID:  comment.ID,
+			OccurredAt: time.Now(),
+		}
+		if err := t.eventRepo.PublishCommentEvent(context.Background(), event); err != nil {
+			log.Errorf("Не удалось опубликовать событие об удалении комментария в Kafka: %v", err)
+		}
 	}
 
 	// Если нужно забанить пользователя в telegram, то баним его
@@ -256,7 +288,7 @@ func (t *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 		// Создаем запрос на бан пользователя
 		banConfig := tgbotapi.BanChatMemberConfig{
 			ChatMemberConfig: tgbotapi.ChatMemberConfig{
-				ChatID: int64(discussionID),
+				ChatID: int64(*tgChannel.DiscussionID),
 				UserID: int64(request.UserID),
 			},
 			UntilDate:      0, // 0 означает бан навсегда
@@ -270,101 +302,16 @@ func (t *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 
 		if err != nil {
 			log.Errorf("Не удалось забанить пользователя в Post: %v", err)
-		} else {
-			log.Infof("Пользователь с ID %d успешно забанен в канале %d", comment.UserPlatformID, discussionID)
 		}
-	}
-
-	// уведомляем подписчиков об удалении комментария
-	err = t.notifySubscribers(request.PostCommentID, 0, discussionID, "deleted")
-	if err != nil {
-		log.Errorf("Failed to notify subscribers about deleted comment: %v", err)
 	}
 
 	return nil
 }
 
-func (t *Comment) SubscribeToCommentEvents(userID, teamID, postUnionID int) <-chan *entity.CommentEvent {
-	sub := entity.Subscriber{
-		UserID:      userID,
-		TeamID:      teamID,
-		PostUnionID: postUnionID,
+// Вспомогательная функция для безопасного получения int из *int
+func derefInt(ptr *int) int {
+	if ptr != nil {
+		return *ptr
 	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if ch, ok := t.subscribers[sub]; ok {
-		return ch
-	}
-
-	ch := make(chan *entity.CommentEvent)
-	t.subscribers[sub] = ch
-	return ch
-}
-
-func (t *Comment) UnsubscribeFromComments(userID, teamID, postUnionID int) {
-	sub := entity.Subscriber{
-		UserID:      userID,
-		TeamID:      teamID,
-		PostUnionID: postUnionID,
-	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if ch, ok := t.subscribers[sub]; ok {
-		close(ch)
-		delete(t.subscribers, sub)
-	}
-}
-
-func (t *Comment) notifySubscribers(commentID, postUnionID, discussionID int, eventType string) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	// Определяем, какой команде принадлежит комментарий
-	teamId, err := t.teamRepo.GetTeamIDByTGDiscussionID(discussionID)
-	if errors.Is(err, repo.ErrTGChannelNotFound) {
-		// Если не нашли команду, то пропускаем
-		return nil
-	}
-	if err != nil {
-		log.Errorf("Failed to get teamId by postUnionID: %v", err)
-		return err
-	}
-	// Смотрим, какие участники есть в команде
-	teamMemberIDs, err := t.teamRepo.GetTeamUsers(teamId)
-	if err != nil {
-		log.Errorf("Failed to get team members: %v", err)
-		return err
-	}
-
-	for _, memberID := range teamMemberIDs {
-		sub := entity.Subscriber{
-			UserID:      memberID,
-			TeamID:      teamId,
-			PostUnionID: 0,
-		}
-		if ch, ok := t.subscribers[sub]; ok {
-			go func() {
-				ch <- &entity.CommentEvent{
-					CommentID: commentID,
-					Type:      eventType,
-				}
-			}()
-		}
-		// также возможен вариант, если подписка осуществлена под конкретный пост
-		if postUnionID != 0 {
-			sub.PostUnionID = postUnionID
-			if ch, ok := t.subscribers[sub]; ok {
-				go func() {
-					ch <- &entity.CommentEvent{
-						CommentID: commentID,
-						Type:      eventType,
-					}
-				}()
-			}
-		}
-	}
-	return nil
+	return 0
 }

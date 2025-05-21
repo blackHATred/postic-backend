@@ -7,21 +7,23 @@ import (
 
 type User interface {
 	// AddUser добавляет нового пользователя
-	AddUser() (int, error)
+	AddUser(user *entity.User) (int, error)
 	// GetUser возвращает пользователя по его ID
 	GetUser(userID int) (*entity.User, error)
-	// GetUserBySecret возвращает пользователя по его секрету
-	GetUserBySecret(secret string) (*entity.User, error)
-	// GetTGChannel возвращает канал Телеграм как канал публикации пользователя
-	GetTGChannel(userID int) (*entity.TGChannel, error)
-	// GetVKChannel возвращает группу ВК как канал публикации пользователя
-	GetVKChannel(userID int) (*entity.VKChannel, error)
-	// PutVKChannel добавляет группу ВКонтакте как канал публикации для пользователя
-	PutVKChannel(userID, groupID int, apiKey string) error
-	// PutTGChannel добавляет канал Телеграм как канал публикации для пользователя
-	PutTGChannel(userID, channelID, discussionID int) error
+	// GetUserByEmail возвращает пользователя по его email
+	GetUserByEmail(email string) (*entity.User, error)
+	// GetUserByVkID возвращает пользователя по его VK ID
+	GetUserByVkID(vkID int) (*entity.User, error)
+	// UpdatePassword обновляет пароль пользователя
+	UpdatePassword(userID int, passwordHash string) error
+	// UpdateProfile обновляет профиль пользователя
+	UpdateProfile(userID int, profile *entity.UpdateProfileRequest) error
+	// UpdateVkAuth обновляет данные авторизации через ВКонтакте
+	UpdateVkAuth(userID, vkID int, accessToken, refreshToken string, expiresAt int64) error
 }
 
 var (
-	ErrUserNotFound = errors.New("user not found")
+	ErrUserNotFound    = errors.New("user not found")
+	ErrEmailExists     = errors.New("email already exists")
+	ErrInvalidPassword = errors.New("invalid password")
 )

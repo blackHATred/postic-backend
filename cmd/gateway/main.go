@@ -14,6 +14,7 @@ import (
 	delivery "postic-backend/internal/delivery/http"
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/repo/cockroach"
+	"postic-backend/internal/repo/kafka"
 	"postic-backend/internal/usecase/service"
 	"postic-backend/internal/usecase/service/telegram"
 	"postic-backend/internal/usecase/service/vkontakte"
@@ -40,6 +41,13 @@ func main() {
 	corsOrigin := os.Getenv("CORS_ORIGIN")
 	summarizeURL := os.Getenv("SUMMARIZE_URL")
 	replyIdeasURL := os.Getenv("REPLY_IDEAS_URL")
+	vkClientID := os.Getenv("VK_CLIENT_ID")
+	vkClientSecret := os.Getenv("VK_CLIENT_SECRET")
+	vkRedirectURL := os.Getenv("VK_REDIRECT_URL")
+	vkSuccessURL := os.Getenv("VK_FRONTEND_SUCCESS_REDIRECT_URL")
+	vkErrorURL := os.Getenv("VK_FRONTEND_ERROR_REDIRECT_URL")
+
+	vkAuth := utils.NewVKOAuth(vkClientID, vkClientSecret, vkRedirectURL)
 
 	// cockroach
 	DBConn, err := connector.GetCockroachConnector(dbConnectDSN) // примерный вид dsn: "user=root dbname=defaultdb sslmode=disable"
@@ -60,6 +68,10 @@ func main() {
 	}
 
 	// запускаем сервисы репозиториев (подключение к базе данных)
+	eventRepo, err := kafka.NewCommentEventKafkaRepository([]string{"localhost:9092"})
+	if err != nil {
+		log.Fatalf("Ошибка при создании Kafka репозитория: %v", err)
+	}
 	userRepo := cockroach.NewUser(DBConn)
 	teamRepo := cockroach.NewTeam(DBConn)
 	postRepo := cockroach.NewPost(DBConn)
@@ -79,16 +91,16 @@ func main() {
 		log.Fatalf("Ошибка при создании Telegram бота: %v", err)
 	}
 	telegramPostPlatformUseCase := telegram.NewTelegramPost(tgBot, postRepo, teamRepo, uploadRepo)
-	telegramCommentUseCase := telegram.NewTelegramComment(tgBot, commentRepo, teamRepo, uploadRepo)
-	telegramEventListener, err := telegram.NewTelegramEventListener(telegramBotToken, true, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo)
+	telegramCommentUseCase := telegram.NewTelegramComment(tgBot, commentRepo, teamRepo, uploadRepo, eventRepo)
+	telegramEventListener, err := telegram.NewTelegramEventListener(telegramBotToken, false, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo, eventRepo)
 	if err != nil {
 		log.Fatalf("Ошибка при создании слушателя событий Post: %v", err)
 	}
 	telegramAnalytics := telegram.NewTelegramAnalytics(teamRepo, postRepo, analyticsRepo)
 	// -- vk --
 	vkPostPlatformUseCase := vkontakte.NewPost(postRepo, teamRepo, uploadRepo)
-	vkCommentUseCase := vkontakte.NewVkontakteComment(commentRepo, teamRepo, uploadRepo)
-	vkEventListener := vkontakte.NewVKEventListener(vkontakteListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo)
+	vkCommentUseCase := vkontakte.NewVkontakteComment(commentRepo, teamRepo, uploadRepo, eventRepo)
+	vkEventListener := vkontakte.NewVKEventListener(vkontakteListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, eventRepo)
 	vkAnalytics := vkontakte.NewVkontakteAnalytics(teamRepo, postRepo, analyticsRepo)
 
 	postUseCase := service.NewPostUnion(
@@ -98,19 +110,18 @@ func main() {
 		telegramPostPlatformUseCase,
 		vkPostPlatformUseCase,
 	)
-	userUseCase := service.NewUser(userRepo)
+	userUseCase := service.NewUser(userRepo, vkAuth)
 	uploadUseCase := service.NewUpload(uploadRepo)
 	teamUseCase := service.NewTeam(teamRepo)
 	commentUseCase := service.NewComment(
 		commentRepo,
 		postRepo,
 		teamRepo,
-		telegramEventListener,
 		telegramCommentUseCase,
-		vkEventListener,
 		vkCommentUseCase,
 		summarizeURL,
 		replyIdeasURL,
+		eventRepo,
 	)
 	analyticsUseCase := service.NewAnalytics(analyticsRepo, teamRepo, postRepo, telegramAnalytics, vkAnalytics)
 
@@ -118,7 +129,7 @@ func main() {
 	cookieManager := utils.NewCookieManager(false)
 	authManager := utils.NewAuthManager([]byte(jwtSecret), userRepo, time.Hour*24*365)
 	postDelivery := delivery.NewPost(authManager, postUseCase)
-	userDelivery := delivery.NewUser(userUseCase, authManager, cookieManager)
+	userDelivery := delivery.NewUser(userUseCase, authManager, cookieManager, vkSuccessURL, vkErrorURL)
 	uploadDelivery := delivery.NewUpload(uploadUseCase, authManager)
 	teamDelivery := delivery.NewTeam(teamUseCase, authManager)
 	commentDelivery := delivery.NewComment(sysCtx, commentUseCase, authManager)
@@ -132,8 +143,8 @@ func main() {
 	// echoServer.Server.ReadHeaderTimeout = 60 * time.Second
 	// echoServer.Server.WriteTimeout = 60 * time.Second
 	// echoServer.Server.IdleTimeout = 60 * time.Second
-	// Не более 20 МБ
-	// echoServer.Use(middleware.BodyLimit("20M"))
+	// Не более 50 МБ
+	echoServer.Use(middleware.BodyLimit("50M"))
 	// gzip на прием
 	// echoServer.Use(middleware.Decompress())
 	// gzip на отдачу

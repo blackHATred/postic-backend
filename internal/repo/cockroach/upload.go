@@ -1,7 +1,6 @@
 package cockroach
 
 import (
-	"bytes"
 	"context"
 	"github.com/jmoiron/sqlx"
 	"github.com/minio/minio-go/v7"
@@ -74,8 +73,12 @@ func (u *Upload) UploadFile(upload *entity.Upload) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	// возвратим указатель в начало, чтобы не потерять позицию
+	_, err = upload.RawBytes.Seek(0, 0)
+	if err != nil {
+		return 0, err
+	}
 	// так как считали все байты, то нужно создать новый буфер - будем считать это допустимым оверхедом
-	upload.RawBytes = bytes.NewBuffer(rawBytes)
 	mediaType := http.DetectContentType(rawBytes)
 	_, err = u.minioClient.PutObject(
 		ctx,

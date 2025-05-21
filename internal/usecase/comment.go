@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"context"
 	"errors"
 	"postic-backend/internal/entity"
 )
@@ -13,13 +14,11 @@ type EventSubscriber interface {
 }
 
 type Listener interface {
-	EventSubscriber
 	StartListener()
 	StopListener()
 }
 
 type CommentActionPlatform interface {
-	EventSubscriber
 	// ReplyComment отправляет комментарий в ответ на другой комментарий от имени группы
 	ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 	// DeleteComment удаляет комментарий
@@ -33,11 +32,8 @@ type Comment interface {
 	GetLastComments(request *entity.GetCommentsRequest) ([]*entity.Comment, error)
 	// GetSummarize возвращает сводку по посту
 	GetSummarize(request *entity.SummarizeCommentRequest) (*entity.Summarize, error)
-	// Subscribe подписывается на получение новых комментариев. Возвращает канал, по которому будут приходить ID
-	// новых комментариев
-	Subscribe(request *entity.Subscriber) (<-chan *entity.CommentEvent, error)
-	// Unsubscribe отписывается от получения новых комментариев
-	Unsubscribe(request *entity.Subscriber)
+	// Subscribe подписывается на получение новых комментариев. Теперь принимает context
+	Subscribe(ctx context.Context, request *entity.Subscriber) (<-chan *entity.CommentEvent, error)
 	// ReplyComment отправляет комментарий в ответ на другой комментарий от имени группы
 	ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 	// DeleteComment удаляет комментарий

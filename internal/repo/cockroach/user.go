@@ -1,9 +1,12 @@
 package cockroach
 
 import (
+	"database/sql"
+	"errors"
 	"github.com/jmoiron/sqlx"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
+	"time"
 )
 
 type User struct {
@@ -16,10 +19,52 @@ func NewUser(db *sqlx.DB) repo.User {
 	}
 }
 
-func (u *User) AddUser() (int, error) {
+func (u *User) AddUser(user *entity.User) (int, error) {
 	var userID int
-	query := `INSERT INTO "user" DEFAULT VALUES RETURNING id`
-	err := u.db.QueryRow(query).Scan(&userID)
+
+	// Проверяем, существует ли пользователь с таким email
+	if user.Email != nil {
+		var exists bool
+		query := `SELECT EXISTS(SELECT 1 FROM "user" WHERE email = $1)`
+		err := u.db.QueryRow(query, user.Email).Scan(&exists)
+		if err != nil {
+			return 0, err
+		}
+
+		if exists {
+			return 0, repo.ErrEmailExists
+		}
+	}
+	if user.VkID != nil {
+		var exists bool
+		query := `SELECT EXISTS(SELECT 1 FROM "user" WHERE vk_id = $1)`
+		err := u.db.QueryRow(query, user.VkID).Scan(&exists)
+		if err != nil {
+			return 0, err
+		}
+
+		if exists {
+			return 0, repo.ErrEmailExists
+		}
+	}
+
+	query := `
+    INSERT INTO "user" (
+        nickname, email, password_hash, vk_id, vk_access_token, vk_refresh_token, vk_token_expires_at
+    ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7
+    ) RETURNING id`
+	err := u.db.QueryRow(
+		query,
+		user.Nickname,
+		user.Email,
+		user.PasswordHash,
+		user.VkID,
+		user.VkAccessToken,
+		user.VkRefreshToken,
+		user.VkTokenExpiresAt,
+	).Scan(&userID)
+
 	if err != nil {
 		return 0, err
 	}
@@ -28,52 +73,115 @@ func (u *User) AddUser() (int, error) {
 
 func (u *User) GetUser(userID int) (*entity.User, error) {
 	var user entity.User
-	query := `SELECT id FROM "user" WHERE id = $1`
+	query := `SELECT id, nickname, email, password_hash, vk_id, vk_access_token, vk_refresh_token, vk_token_expires_at
+			  FROM "user" WHERE id = $1`
 	err := u.db.Get(&user, query, userID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, repo.ErrUserNotFound
+		}
 		return nil, err
 	}
 	return &user, nil
 }
 
-func (u *User) GetUserBySecret(secret string) (*entity.User, error) {
+func (u *User) GetUserByEmail(email string) (*entity.User, error) {
 	var user entity.User
-	query := `SELECT id FROM "user" WHERE secret = $1`
-	err := u.db.Get(&user, query, secret)
+	query := `SELECT id, nickname, email, password_hash, vk_id, vk_access_token, vk_refresh_token, vk_token_expires_at
+			  FROM "user" WHERE email = $1`
+	err := u.db.Get(&user, query, email)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, repo.ErrUserNotFound
+		}
 		return nil, err
 	}
 	return &user, nil
 }
 
-func (u *User) GetTGChannel(userID int) (*entity.TGChannel, error) {
-	var channel entity.TGChannel
-	query := `SELECT id, user_id, channel_id, discussion_id FROM channel_tg WHERE user_id = $1`
-	err := u.db.Get(&channel, query, userID)
+func (u *User) GetUserByVkID(vkID int) (*entity.User, error) {
+	var user entity.User
+	query := `SELECT id, nickname, email, password_hash, vk_id, vk_access_token, vk_refresh_token, vk_token_expires_at
+			  FROM "user" WHERE vk_id = $1`
+	err := u.db.Get(&user, query, vkID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, repo.ErrUserNotFound
+		}
 		return nil, err
 	}
-	return &channel, nil
+	return &user, nil
 }
 
-func (u *User) GetVKChannel(userID int) (*entity.VKChannel, error) {
-	//TODO implement me
-	panic("implement me")
+func (u *User) UpdatePassword(userID int, passwordHash string) error {
+	query := `UPDATE "user" SET password_hash = $1 WHERE id = $2`
+	result, err := u.db.Exec(query, passwordHash, userID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return repo.ErrUserNotFound
+	}
+
+	return nil
 }
 
-func (u *User) PutVKChannel(userID, groupID int, apiKey string) error {
-	//TODO implement me
-	panic("implement me")
+func (u *User) UpdateProfile(userID int, profile *entity.UpdateProfileRequest) error {
+	// Проверяем, существует ли пользователь с таким email, кроме текущего
+	if profile.Email != "" {
+		var exists bool
+		query := `SELECT EXISTS(SELECT 1 FROM "user" WHERE email = $1 AND id != $2)`
+		err := u.db.QueryRow(query, profile.Email, userID).Scan(&exists)
+		if err != nil {
+			return err
+		}
+
+		if exists {
+			return repo.ErrEmailExists
+		}
+	}
+
+	query := `UPDATE "user" SET nickname = $1, email = $2 WHERE id = $3`
+	result, err := u.db.Exec(query, profile.Nickname, profile.Email, userID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return repo.ErrUserNotFound
+	}
+
+	return nil
 }
 
-func (u *User) PutTGChannel(userID, channelID, discussionID int) error {
-	query := `
-		INSERT INTO channel_tg (user_id, channel_id, discussion_id)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (user_id) DO UPDATE
-		SET channel_id = EXCLUDED.channel_id,
-		    discussion_id = EXCLUDED.discussion_id
-	`
-	_, err := u.db.Exec(query, userID, channelID, discussionID)
-	return err
+func (u *User) UpdateVkAuth(userID, vkID int, accessToken, refreshToken string, expiresAt int64) error {
+	expiresTime := time.Unix(expiresAt, 0)
+
+	query := `UPDATE "user" SET vk_id = $1, vk_access_token = $2, vk_refresh_token = $3, vk_token_expires_at = $4 WHERE id = $5`
+	result, err := u.db.Exec(query, vkID, accessToken, refreshToken, expiresTime, userID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return repo.ErrUserNotFound
+	}
+
+	return nil
 }

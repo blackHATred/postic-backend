@@ -296,7 +296,6 @@ func (c *Comment) MarkAsTicket(e echo.Context) error {
 }
 
 func (c *Comment) SubscribeToComments(e echo.Context) error {
-	// Получаем ID пользователя из контекста
 	userID, err := c.authManager.CheckAuthFromContext(e)
 	if err != nil {
 		return e.JSON(http.StatusUnauthorized, echo.Map{
@@ -313,11 +312,12 @@ func (c *Comment) SubscribeToComments(e echo.Context) error {
 	}
 	request.UserID = userID
 
-	// Подписываемся на комментарии (в сервисе проверяются права доступа)
-	commentsCh, err := c.commentUseCase.Subscribe(request)
+	commentsCh, err := c.commentUseCase.Subscribe(e.Request().Context(), request)
 	switch {
 	case errors.Is(err, usecase.ErrUserForbidden):
 		return echo.NewHTTPError(http.StatusForbidden, "У вас нет прав на получение комментариев")
+	case errors.Is(err, usecase.ErrPostUnionNotFound):
+		return echo.NewHTTPError(http.StatusNotFound, "Пост не найден")
 	case err != nil:
 		log.Errorf("Ошибка при подписке на комментарии: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Ошибка сервера")
@@ -331,10 +331,6 @@ func (c *Comment) SubscribeToComments(e echo.Context) error {
 	w.WriteHeader(http.StatusOK)
 	w.Flush()
 
-	// При выходе из функции отписываемся от комментариев
-	defer c.commentUseCase.Unsubscribe(request)
-
-	// Отправка периодических пингов для поддержания соединения
 	pingTicker := time.NewTicker(20 * time.Second)
 	defer pingTicker.Stop()
 
@@ -346,10 +342,8 @@ func (c *Comment) SubscribeToComments(e echo.Context) error {
 			return nil
 		case comment, ok := <-commentsCh:
 			if !ok {
-				// Канал был закрыт сервером
 				return nil
 			}
-
 			marshaledComment, err := json.Marshal(comment)
 			if err != nil {
 				log.Errorf("Ошибка при сериализации комментария: %v", err)
@@ -365,8 +359,6 @@ func (c *Comment) SubscribeToComments(e echo.Context) error {
 				log.Errorf("Ошибка при отправке комментария: %v", err)
 				return err
 			}
-			w.Flush()
-		case <-pingTicker.C:
 			// Отправляем ping для поддержания соединения
 			ping := sse.Event{
 				Event: []byte("ping"),
@@ -375,6 +367,16 @@ func (c *Comment) SubscribeToComments(e echo.Context) error {
 			if err := ping.MarshalTo(w); err != nil {
 				log.Errorf("Ошибка при отправке ping: %v", err)
 				return err
+			}
+			w.Flush()
+		case <-pingTicker.C:
+			ping := sse.Event{
+				Event: []byte("ping"),
+				Data:  []byte(""),
+			}
+			if err := ping.MarshalTo(w); err != nil {
+				log.Errorf("Ошибка маршалинга пинга: %v", err)
+				return nil
 			}
 			w.Flush()
 		}

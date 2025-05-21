@@ -2,7 +2,6 @@ package http
 
 import (
 	"github.com/labstack/echo/v4"
-	"io"
 	"net/http"
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/entity"
@@ -39,7 +38,7 @@ func (u *Upload) Upload(c echo.Context) error {
 	file, err := c.FormFile("file")
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
-			"error": "Файл не найден: " + err.Error(),
+			"error": "Ошибка извлечения файла: " + err.Error(),
 		})
 	}
 
@@ -100,11 +99,10 @@ func (u *Upload) GetFile(c echo.Context) error {
 			"error": "Ошибка получения файла: " + err.Error(),
 		})
 	}
-	fileBytes, err := io.ReadAll(file.RawBytes)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": "Ошибка чтения файла: " + err.Error(),
-		})
-	}
-	return c.Blob(http.StatusOK, http.DetectContentType(fileBytes), fileBytes)
+
+	// Поддержка HTTP Range-запросов для Seekable-контента
+	c.Response().Header().Set("Accept-Ranges", "bytes")
+	// Передаём контент с поддержкой диапазонов
+	http.ServeContent(c.Response(), c.Request(), file.FilePath, file.CreatedAt, file.RawBytes)
+	return nil
 }

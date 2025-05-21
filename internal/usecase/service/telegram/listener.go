@@ -31,7 +31,7 @@ type EventListener struct {
 	uploadRepo                repo.Upload
 	commentRepo               repo.Comment
 	analyticsRepo             repo.Analytics
-	subscribers               map[entity.Subscriber]chan *entity.CommentEvent
+	eventRepo                 repo.CommentEventRepository
 	mu                        sync.Mutex
 }
 
@@ -44,6 +44,7 @@ func NewTelegramEventListener(
 	uploadRepo repo.Upload,
 	commentRepo repo.Comment,
 	analyticsRepo repo.Analytics,
+	eventRepo repo.CommentEventRepository,
 ) (usecase.Listener, error) {
 	lastUpdateID, err := telegramEventListenerRepo.GetLastUpdate()
 	for err != nil {
@@ -92,7 +93,7 @@ func NewTelegramEventListener(
 		uploadRepo:                uploadRepo,
 		commentRepo:               commentRepo,
 		analyticsRepo:             analyticsRepo,
-		subscribers:               make(map[entity.Subscriber]chan *entity.CommentEvent),
+		eventRepo:                 eventRepo,
 	}, nil
 }
 
@@ -121,21 +122,23 @@ func (t *EventListener) StartListener() {
 func (t *EventListener) StopListener() {
 	// Отменяем контекст, что останавливает получение обновлений
 	t.cancel()
-
-	// Закрываем все каналы подписчиков
-	t.mu.Lock()
-	for _, ch := range t.subscribers {
-		close(ch)
-	}
-	t.subscribers = make(map[entity.Subscriber]chan *entity.CommentEvent)
-	t.mu.Unlock()
 }
 
 func (t *EventListener) UpdateStats(update *models.Update) {
-	post, err := t.postRepo.GetPostPlatformByPlatformPostID(update.MessageReactionCount.MessageID, "tg")
+	tgChannel, err := t.teamRepo.GetTGChannelByChannelID(int(update.MessageReactionCount.Chat.ID))
+	if errors.Is(err, repo.ErrTGChannelNotFound) {
+		log.Infof("Channel not found for discussion ID: %d", update.MessageReactionCount.Chat.ID)
+		return
+	}
+	post, err := t.postRepo.GetPostPlatformByPost(
+		update.MessageReactionCount.MessageID,
+		tgChannel.ID,
+		"tg",
+	)
 	switch {
 	case errors.Is(err, repo.ErrPostPlatformNotFound):
 		// игнорируем такую ошибку
+		log.Infof("Post not found for message ID: %d", update.MessageReactionCount.MessageID)
 		return
 	case err != nil:
 		log.Errorf("Failed to get post: %v", err)
@@ -151,74 +154,18 @@ func (t *EventListener) UpdateStats(update *models.Update) {
 	}
 
 	// Обновляем количество реакций под статистикой
-	existingStats, err := t.analyticsRepo.GetPostPlatformStatsByPostUnionID(post.PostUnionId, "tg")
-	switch {
-	case errors.Is(err, repo.ErrPostPlatformStatsNotFound):
-		// Если статистика не существует, создаём новую
-		postUnion, err := t.postRepo.GetPostUnion(post.PostUnionId)
-		if err != nil {
-			log.Errorf("Failed to get post union: %v", err)
-			return
-		}
-
-		newStats := &entity.PostPlatformStats{
-			TeamID:      postUnion.TeamID,
-			PostUnionID: postUnion.ID,
-			Platform:    "tg",
-			Views:       0,
-			Comments:    0,
-			Reactions:   totalReactions,
-			LastUpdate:  time.Now(),
-		}
-
-		err = t.analyticsRepo.AddPostPlatformStats(newStats)
-		if err != nil {
-			log.Errorf("Failed to add post platform stats: %v", err)
-		}
-	case err != nil:
-		log.Errorf("Failed to get post platform stats: %v", err)
-		return
-	default:
-		// Обновляем существующую статистику
-		existingStats.Reactions = totalReactions
-		err = t.analyticsRepo.EditPostPlatformStats(existingStats)
-		if err != nil {
-			log.Errorf("Failed to update post platform stats: %v", err)
-		}
-	}
-}
-
-func (t *EventListener) SubscribeToCommentEvents(userID, teamID, postUnionID int) <-chan *entity.CommentEvent {
-	sub := entity.Subscriber{
-		UserID:      userID,
-		TeamID:      teamID,
-		PostUnionID: postUnionID,
+	stats := &entity.PostPlatformStats{
+		TeamID:      tgChannel.TeamID,
+		PostUnionID: post.PostUnionId,
+		Platform:    "tg",
+		Reactions:   totalReactions,
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if ch, ok := t.subscribers[sub]; ok {
-		// такой канал уже есть - возвращаем его
-		return ch
+	log.Infof("Reactions: %v", stats.Reactions)
+	err = t.analyticsRepo.UpdateLastPlatformStats(stats, "tg")
+	if err != nil {
+		log.Errorf("failed to update post platform stats: %v", err)
 	}
-
-	ch := make(chan *entity.CommentEvent)
-	t.subscribers[sub] = ch
-	return ch
-}
-
-func (t *EventListener) UnsubscribeFromComments(userID, teamID, postUnionID int) {
-	sub := entity.Subscriber{
-		UserID:      userID,
-		TeamID:      teamID,
-		PostUnionID: postUnionID,
-	}
-	t.mu.Lock()
-	if ch, ok := t.subscribers[sub]; ok {
-		close(ch)
-		delete(t.subscribers, sub)
-	}
-	t.mu.Unlock()
 }
 
 func getExtensionForType(fileType string) string {
@@ -232,7 +179,7 @@ func getExtensionForType(fileType string) string {
 	case "voice":
 		return "ogg"
 	case "document":
-		return "bin" // generic binary extension for documents
+		return "bin"
 	case "sticker":
 		return "webp"
 	default:
@@ -266,11 +213,9 @@ func (t *EventListener) saveFile(fileID, fileType string) (int, error) {
 	body = resp.Body
 
 	if file.FilePath != "" && strings.Contains(file.FilePath, ".") {
-		// Extract extension from original Post file path
 		parts := strings.Split(file.FilePath, ".")
 		extension = parts[len(parts)-1]
 	} else {
-		// Fallback to mapping based on fileType
 		extension = getExtensionForType(fileType)
 	}
 
@@ -296,9 +241,15 @@ func (t *EventListener) saveFile(fileID, fileType string) (int, error) {
 		extension = "json"
 	}
 
+	bodyData, err := io.ReadAll(body)
+	if err != nil {
+		log.Errorf("Failed to read file data: %v", err)
+		return 0, err
+	}
+
 	// Сохраняем в S3
 	upload := &entity.Upload{
-		RawBytes: body,
+		RawBytes: bytes.NewReader(bodyData),
 		FilePath: fmt.Sprintf("tg/%s.%s", uuid.New().String(), extension),
 		FileType: fileType,
 	}
@@ -424,7 +375,7 @@ func (t *EventListener) handleCommand(update *models.Update) error {
 			"/help - Показать список команд\n" +
 			"/add_channel - Добавить канал. Если канал уже привязан, то вызов этой команды обновит его настройки"
 	case "add_channel":
-		cmdArgs := strings.Split(args, " ")
+		cmdArgs := strings.Fields(args)
 		if len(cmdArgs) > 3 || len(cmdArgs) < 2 {
 			params.Text = "❌ Неверное количество параметров. Используйте: " +
 				"/add_channel <ключ пользователя> <ID канала> <ID обсуждений (при наличии)>.\n" +
@@ -443,10 +394,10 @@ func (t *EventListener) handleCommand(update *models.Update) error {
 			return err
 		}
 
-		var discussionID int64
+		var discussionIDParsed int64
 		if len(cmdArgs) > 2 {
-			discussionID, err = strconv.ParseInt(cmdArgs[2], 10, 64)
-			if err != nil || discussionID >= 0 {
+			discussionIDParsed, err = strconv.ParseInt(cmdArgs[2], 10, 64)
+			if err != nil || discussionIDParsed >= 0 {
 				params.Text = "Неверный формат discussion_id. Используйте целое отрицательное число."
 				_, err := t.bot.SendMessage(t.ctx, params)
 				return err
@@ -459,7 +410,12 @@ func (t *EventListener) handleCommand(update *models.Update) error {
 			_, err := t.bot.SendMessage(t.ctx, params)
 			return err
 		}
-		err = t.teamRepo.PutTGChannel(teamId, int(channelID), int(discussionID))
+		discussionIDint := int(discussionIDParsed)
+		err = t.teamRepo.PutTGChannel(&entity.TGChannel{
+			TeamID:       teamId,
+			ChannelID:    int(channelID),
+			DiscussionID: &discussionIDint,
+		})
 		if err != nil {
 			params.Text = "Не удалось добавить канал. Обратитесь в поддержку для решения вопроса."
 			_, err := t.bot.SendMessage(t.ctx, params)
@@ -488,7 +444,7 @@ func (t *EventListener) handleComment(update *models.Update) error {
 	} else {
 		return nil
 	}
-	_, err := t.teamRepo.GetTGChannelByDiscussionId(discussionID)
+	tgChannel, err := t.teamRepo.GetTGChannelByDiscussionId(discussionID)
 	if errors.Is(err, repo.ErrTGChannelNotFound) {
 		return nil
 	}
@@ -497,20 +453,22 @@ func (t *EventListener) handleComment(update *models.Update) error {
 		return err
 	}
 
-	var postTg *entity.PostPlatform
+	var post *entity.PostPlatform
 	var replyToComment *entity.Comment
+	post = nil
+	replyToComment = nil
 	if update.Message != nil && update.Message.ReplyToMessage != nil {
 		// Первый случай: Ответ на пересланное сообщение из канала
 		if update.Message.ReplyToMessage.ForwardOrigin != nil &&
 			update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel != nil {
-
-			log.Debugf("Received reply to forwarded post: %s", update.Message.ReplyToMessage.Text)
-			postTg, err = t.postRepo.GetPostPlatformByPlatformPostID(
-				update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel.MessageID, "tg")
-
+			post, err = t.postRepo.GetPostPlatformByPost(
+				update.Message.ReplyToMessage.ForwardOrigin.MessageOriginChannel.MessageID,
+				tgChannel.ID,
+				"tg",
+			)
 			if errors.Is(err, repo.ErrPostPlatformNotFound) {
 				// Если это не пост, то возможно это ответ на комментарий
-				replyToComment, err = t.commentRepo.GetCommentInfoByPlatformID(update.Message.ReplyToMessage.ID, "tg")
+				replyToComment, err = t.commentRepo.GetCommentByPlatformID(update.Message.ReplyToMessage.ID, "tg")
 				if errors.Is(err, repo.ErrCommentNotFound) {
 					// Такие случаи игнорим
 					log.Debugf("Reply target not found as post or comment, ignoring")
@@ -525,7 +483,7 @@ func (t *EventListener) handleComment(update *models.Update) error {
 		} else {
 			// Второй случай: Ответ на сообщение в обсуждении
 			log.Debugf("Received direct reply to comment: %s", update.Message.ReplyToMessage.Text)
-			replyToComment, err = t.commentRepo.GetCommentInfoByPlatformID(update.Message.ReplyToMessage.ID, "tg")
+			replyToComment, err = t.commentRepo.GetCommentByPlatformID(update.Message.ReplyToMessage.ID, "tg")
 			if errors.Is(err, repo.ErrCommentNotFound) {
 				// игнорим такие комментарии
 				log.Debugf("Reply target not found as comment, treating as regular comment")
@@ -536,14 +494,11 @@ func (t *EventListener) handleComment(update *models.Update) error {
 		}
 	}
 
-	eventType := "new"
-
 	// Если это редактирование, проверяем существующий комментарий
 	if update.EditedMessage != nil {
 		log.Debugf("Received edited message: %s", update.EditedMessage.Text)
 		update.Message = update.EditedMessage
-		eventType = "edited"
-		existingComment, err := t.commentRepo.GetCommentInfoByPlatformID(update.Message.ID, "tg")
+		existingComment, err := t.commentRepo.GetCommentByPlatformID(update.Message.ID, "tg")
 		if errors.Is(err, repo.ErrCommentNotFound) {
 			return nil
 		}
@@ -554,11 +509,16 @@ func (t *EventListener) handleComment(update *models.Update) error {
 		existingComment.Text = update.Message.Text
 		if replyToComment != nil {
 			existingComment.ReplyToCommentID = replyToComment.ID
+			existingComment.PostUnionID = replyToComment.PostUnionID
 		}
 		existingComment.Attachments, err = t.processAttachments(update)
 		if err != nil {
 			log.Errorf("Failed to process attachments: %v", err)
-			return err
+			// не возвращаем ошибку, а просто добавляем в текст комментария информацию о том, что отправитель
+			// прикрепил какие-то файлы
+			existingComment.Text += "\n\n[⚠️ Пользователь прикрепил к комментарию файлы, но не удалось их обработать]"
+			existingComment.Text = strings.TrimSpace(existingComment.Text)
+			// return err
 		}
 		// Если так вышло, что у сообщения по каким-то причинам нет текста и аттачей, то игнорируем его
 		if existingComment.Text == "" && len(existingComment.Attachments) == 0 {
@@ -573,7 +533,21 @@ func (t *EventListener) handleComment(update *models.Update) error {
 		if existingComment.PostUnionID != nil {
 			postUnionID = *existingComment.PostUnionID
 		}
-		return t.notifySubscribers(existingComment.ID, postUnionID, int(update.Message.Chat.ID), eventType)
+		// Уведомляем подписчиков
+		event := &entity.CommentEvent{
+			EventID:    fmt.Sprintf("tg-%d-%d", tgChannel.TeamID, existingComment.ID),
+			TeamID:     tgChannel.TeamID,
+			PostID:     postUnionID,
+			Type:       entity.CommentEdited,
+			CommentID:  existingComment.ID,
+			OccurredAt: existingComment.CreatedAt,
+		}
+		err = t.eventRepo.PublishCommentEvent(t.ctx, event)
+		if err != nil {
+			log.Errorf("Failed to publish comment event: %v", err)
+		}
+
+		return nil
 	}
 
 	// Создаём комментарий
@@ -582,20 +556,10 @@ func (t *EventListener) handleComment(update *models.Update) error {
 		log.Errorf("Failed to get team ID by discussion ID: %v", err)
 		return nil
 	}
-	var postUnionID *int
-	var postPlatformID *int
-	if postTg != nil {
-		postUnionID = &postTg.PostUnionId
-		postPlatformID = &postTg.PostId
-	} else {
-		postUnionID = nil
-		postPlatformID = nil
-	}
+
 	newComment := &entity.Comment{
 		TeamID:            teamID,
-		PostUnionID:       postUnionID,
 		Platform:          "tg",
-		PostPlatformID:    postPlatformID,
 		UserPlatformID:    int(update.Message.From.ID),
 		CommentPlatformID: update.Message.ID,
 		FullName:          fmt.Sprintf("%s %s", update.Message.From.FirstName, update.Message.From.LastName),
@@ -605,6 +569,11 @@ func (t *EventListener) handleComment(update *models.Update) error {
 	}
 	if replyToComment != nil {
 		newComment.ReplyToCommentID = replyToComment.ID
+		newComment.PostUnionID = replyToComment.PostUnionID
+		newComment.PostPlatformID = replyToComment.PostPlatformID
+	} else if post != nil {
+		newComment.PostUnionID = &post.PostUnionId
+		newComment.PostPlatformID = &post.PostId
 	}
 
 	// Загружаем фотку, сохраняем в S3, сохраняем в БД
@@ -635,7 +604,11 @@ func (t *EventListener) handleComment(update *models.Update) error {
 	newComment.Attachments, err = t.processAttachments(update)
 	if err != nil {
 		log.Errorf("Failed to process attachments: %v", err)
-		return err
+		// не возвращаем ошибку, а просто добавляем в текст комментария информацию о том, что отправитель
+		// прикрепил какие-то файлы
+		newComment.Text += "\n\n[⚠️ Пользователь прикрепил к комментарию файлы, но не удалось их обработать]"
+		newComment.Text = strings.TrimSpace(newComment.Text)
+		// return err
 	}
 	// Если так вышло, что у сообщения по каким-то причинам нет текста и аттачей, то игнорируем его
 	if newComment.Text == "" && len(newComment.Attachments) == 0 {
@@ -650,10 +623,23 @@ func (t *EventListener) handleComment(update *models.Update) error {
 	newComment.ID = tgCommentId
 	// Отправляем комментарий подписчикам
 	postUnionIDint := 0
-	if postUnionID != nil {
-		postUnionIDint = *postUnionID
+	if newComment.PostUnionID != nil {
+		postUnionIDint = *newComment.PostUnionID
 	}
-	return t.notifySubscribers(tgCommentId, postUnionIDint, int(update.Message.Chat.ID), eventType)
+	event := &entity.CommentEvent{
+		EventID:    fmt.Sprintf("tg-%d-%d", tgChannel.TeamID, newComment.ID),
+		TeamID:     tgChannel.TeamID,
+		PostID:     postUnionIDint,
+		Type:       entity.CommentCreated,
+		CommentID:  newComment.ID,
+		OccurredAt: newComment.CreatedAt,
+	}
+	err = t.eventRepo.PublishCommentEvent(t.ctx, event)
+	if err != nil {
+		log.Errorf("Failed to publish comment event: %v", err)
+	}
+
+	return nil
 }
 
 func (t *EventListener) processAttachments(update *models.Update) ([]*entity.Upload, error) {
@@ -766,56 +752,6 @@ func (t *EventListener) botProcessUpdate(update *models.Update) error {
 	if (update.Message != nil && update.Message.Chat.Type != models.ChatTypePrivate) ||
 		(update.EditedMessage != nil && update.EditedMessage.Chat.Type != models.ChatTypePrivate) {
 		return t.handleComment(update)
-	}
-	return nil
-}
-
-func (t *EventListener) notifySubscribers(commentID, postUnionID, discussionID int, eventType string) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	// Определяем, какой команде принадлежит комментарий
-	teamId, err := t.teamRepo.GetTeamIDByTGDiscussionID(discussionID)
-	if errors.Is(err, repo.ErrTGChannelNotFound) {
-		// Если не нашли команду, то пропускаем
-		return nil
-	}
-	if err != nil {
-		log.Errorf("Failed to get teamId by postUnionID: %v", err)
-		return err
-	}
-	// Смотрим, какие участники есть в команде
-	teamMemberIDs, err := t.teamRepo.GetTeamUsers(teamId)
-	if err != nil {
-		log.Errorf("Failed to get team members: %v", err)
-		return err
-	}
-
-	for _, memberID := range teamMemberIDs {
-		sub := entity.Subscriber{
-			UserID:      memberID,
-			TeamID:      teamId,
-			PostUnionID: 0,
-		}
-		if ch, ok := t.subscribers[sub]; ok {
-			go func() {
-				ch <- &entity.CommentEvent{
-					CommentID: commentID,
-					Type:      eventType,
-				}
-			}()
-		}
-		// также возможен вариант, если подписка осуществлена под конкретный пост
-		if postUnionID != 0 {
-			sub.PostUnionID = postUnionID
-			if ch, ok := t.subscribers[sub]; ok {
-				go func() {
-					ch <- &entity.CommentEvent{
-						CommentID: commentID,
-						Type:      eventType,
-					}
-				}()
-			}
-		}
 	}
 	return nil
 }

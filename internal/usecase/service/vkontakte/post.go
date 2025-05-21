@@ -84,23 +84,23 @@ func (p *Post) updatePostActionStatus(actionId int, status, errMsg string) {
 
 func (p *Post) publishPost(request *entity.PostUnion, actionId int) {
 	// Получаем креды от VK
-	groupId, adminApiKey, _, err := p.teamRepo.GetVKCredsByTeamID(request.TeamID)
+	vkChannel, err := p.teamRepo.GetVKCredsByTeamID(request.TeamID)
 	if err != nil {
 		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 
 	// используем админский токен
-	vk := api.NewVK(adminApiKey)
+	vk := api.NewVK(vkChannel.AdminAPIKey)
 
 	params := api.Params{
-		"owner_id":   -groupId, // для групп используются отрицательные ID
+		"owner_id":   -vkChannel.GroupID, // для групп используются отрицательные ID
 		"message":    request.Text,
 		"from_group": 1, // от имени группы
 	}
 
 	if len(request.Attachments) > 0 {
-		attachmentsStr, err := p.uploadAttachments(vk, groupId, request.Attachments)
+		attachmentsStr, err := p.uploadAttachments(vk, vkChannel.GroupID, request.Attachments)
 		if err != nil {
 			p.updatePostActionStatus(actionId, "error", err.Error())
 			return
@@ -129,6 +129,7 @@ func (p *Post) publishPost(request *entity.PostUnion, actionId int) {
 			PostUnionId: request.ID,
 			PostId:      response.PostID,
 			Platform:    "vk",
+			VKChannelID: &vkChannel.ID,
 		})
 		return err
 	})
@@ -233,22 +234,22 @@ func (p *Post) EditPost(request *entity.EditPostRequest) (int, error) {
 }
 
 func (p *Post) editPostAsync(post *entity.PostUnion, actionId, postId int, newText string) {
-	groupId, adminApiKey, _, err := p.teamRepo.GetVKCredsByTeamID(post.TeamID)
+	vkChannel, err := p.teamRepo.GetVKCredsByTeamID(post.TeamID)
 	if err != nil {
 		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 
-	vk := api.NewVK(adminApiKey)
+	vk := api.NewVK(vkChannel.AdminAPIKey)
 
 	params := api.Params{
-		"owner_id": -groupId,
+		"owner_id": -vkChannel.GroupID,
 		"post_id":  postId,
 		"message":  newText,
 	}
 
 	if len(post.Attachments) > 0 {
-		attachmentsStr, err := p.uploadAttachments(vk, groupId, post.Attachments)
+		attachmentsStr, err := p.uploadAttachments(vk, vkChannel.GroupID, post.Attachments)
 		if err != nil {
 			p.updatePostActionStatus(actionId, "error", err.Error())
 			return
@@ -307,17 +308,17 @@ func (p *Post) deletePostAsync(post *entity.PostUnion, actionId int) {
 		return
 	}
 
-	groupId, adminApiKey, _, err := p.teamRepo.GetVKCredsByTeamID(post.TeamID)
+	vkChannel, err := p.teamRepo.GetVKCredsByTeamID(post.TeamID)
 	if err != nil {
 		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
 
-	vk := api.NewVK(adminApiKey)
+	vk := api.NewVK(vkChannel.AdminAPIKey)
 
 	err = retry.Retry(func() error {
 		_, err := vk.WallDelete(api.Params{
-			"owner_id": -groupId,
+			"owner_id": -vkChannel.GroupID,
 			"post_id":  postPlatform.PostId,
 		})
 		return err

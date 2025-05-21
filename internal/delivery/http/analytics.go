@@ -24,7 +24,7 @@ func NewAnalytics(analyzeUseCase usecase.Analytics, authManager utils.Auth) *Ana
 func (a *Analytics) Configure(server *echo.Group) {
 	server.GET("/stats", a.GetStats)
 	server.GET("/stats/post", a.GetPostUnionStats)
-	server.POST("/stats/update", a.UpdatePostStats)
+	server.GET("/kpi", a.GetUsersKPI)
 }
 
 func (a *Analytics) GetStats(c echo.Context) error {
@@ -89,14 +89,14 @@ func (a *Analytics) GetPostUnionStats(c echo.Context) error {
 	return c.JSON(http.StatusOK, stats)
 }
 
-func (a *Analytics) UpdatePostStats(c echo.Context) error {
+func (a *Analytics) GetUsersKPI(c echo.Context) error {
 	userID, err := a.authManager.CheckAuthFromContext(c)
 	if err != nil {
 		return err
 	}
 
-	request := &entity.UpdatePostStatsRequest{}
-	err = utils.ReadJSON(c, request)
+	request := &entity.GetUsersKPIRequest{}
+	err = utils.ReadQuery(c, request)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
 			"error": "Неверный формат запроса",
@@ -104,7 +104,7 @@ func (a *Analytics) UpdatePostStats(c echo.Context) error {
 	}
 	request.UserID = userID
 
-	err = a.analyzeUseCase.UpdatePostStats(request)
+	stats, err := a.analyzeUseCase.GetUsersKPI(request)
 	switch {
 	case errors.Is(err, usecase.ErrUserForbidden):
 		return c.JSON(http.StatusForbidden, echo.Map{
@@ -117,5 +117,5 @@ func (a *Analytics) UpdatePostStats(c echo.Context) error {
 		})
 	}
 
-	return c.NoContent(http.StatusOK)
+	return c.JSON(http.StatusOK, stats)
 }

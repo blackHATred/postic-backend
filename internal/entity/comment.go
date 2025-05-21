@@ -23,6 +23,7 @@ type Comment struct {
 	CreatedAt         time.Time `json:"created_at" db:"created_at"`
 	Attachments       []*Upload `json:"attachments"`
 	MarkedAsTicket    bool      `json:"marked_as_ticket" db:"marked_as_ticket"`
+	IsDeleted         bool      `json:"is_deleted" db:"is_deleted"`
 }
 
 type GetCommentsRequest struct {
@@ -60,11 +61,6 @@ type GetCommentRequest struct {
 	UserID    int `query:"-"`
 	TeamID    int `query:"team_id"`
 	CommentID int `query:"comment_id"`
-}
-
-type CommentEvent struct {
-	CommentID int    `json:"comment_id"`
-	Type      string `json:"type"`
 }
 
 type Subscriber struct {

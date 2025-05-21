@@ -208,24 +208,37 @@ func (t *Team) Platforms(userID, teamID int) (*entity.TeamPlatforms, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !slices.Contains(roles, repo.AdminRole) {
+	if len(roles) == 0 {
+		// нет ролей - не может посмотреть привязанные платформы
 		return nil, usecase.ErrUserForbidden
 	}
 	// получаем платформы команды
 	platforms := &entity.TeamPlatforms{}
 	// telegram
-	channelID, discussionID, err := t.teamRepo.GetTGChannelByTeamID(teamID)
-	if err != nil {
+	tgChannel, err := t.teamRepo.GetTGChannelByTeamID(teamID)
+	switch {
+	case errors.Is(err, repo.ErrTGChannelNotFound):
+		break
+	case err != nil:
 		return nil, err
+	default:
+		platforms.TGChannelID = tgChannel.ChannelID
+		platforms.TGDiscussionID = 0
+		if tgChannel.DiscussionID != nil {
+			platforms.TGDiscussionID = *tgChannel.DiscussionID
+		}
 	}
-	platforms.TGChannelID = channelID
-	platforms.TGDiscussionID = discussionID
+
 	// vkontakte
-	groupID, _, _, err := t.teamRepo.GetVKCredsByTeamID(teamID)
-	if err != nil {
+	vkChannel, err := t.teamRepo.GetVKCredsByTeamID(teamID)
+	switch {
+	case errors.Is(err, repo.ErrVKChannelNotFound):
+		break
+	case err != nil:
 		return nil, err
+	default:
+		platforms.VKGroupID = vkChannel.GroupID
 	}
-	platforms.VKGroupID = groupID
 	return platforms, nil
 }
 
@@ -273,7 +286,12 @@ func (t *Team) SetVK(request *entity.SetVKRequest) error {
 	}
 
 	// Сохраняем данные в репозиторий
-	err = t.teamRepo.PutVKGroup(request.TeamID, request.GroupID, request.AdminApiKey, request.GroupApiKey)
+	err = t.teamRepo.PutVKGroup(&entity.VKChannel{
+		TeamID:      request.TeamID,
+		GroupID:     request.GroupID,
+		AdminAPIKey: request.AdminApiKey,
+		GroupAPIKey: request.GroupApiKey,
+	})
 	if err != nil {
 		return err
 	}
