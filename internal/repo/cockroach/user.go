@@ -23,7 +23,7 @@ func (u *User) AddUser(user *entity.User) (int, error) {
 	var userID int
 
 	// Проверяем, существует ли пользователь с таким email
-	if user.Email != "" {
+	if user.Email != nil {
 		var exists bool
 		query := `SELECT EXISTS(SELECT 1 FROM "user" WHERE email = $1)`
 		err := u.db.QueryRow(query, user.Email).Scan(&exists)
@@ -35,9 +35,36 @@ func (u *User) AddUser(user *entity.User) (int, error) {
 			return 0, repo.ErrEmailExists
 		}
 	}
+	if user.VkID != nil {
+		var exists bool
+		query := `SELECT EXISTS(SELECT 1 FROM "user" WHERE vk_id = $1)`
+		err := u.db.QueryRow(query, user.VkID).Scan(&exists)
+		if err != nil {
+			return 0, err
+		}
 
-	query := `INSERT INTO "user" (nickname, email, password_hash) VALUES ($1, $2, $3) RETURNING id`
-	err := u.db.QueryRow(query, user.Nickname, user.Email, user.PasswordHash).Scan(&userID)
+		if exists {
+			return 0, repo.ErrEmailExists
+		}
+	}
+
+	query := `
+    INSERT INTO "user" (
+        nickname, email, password_hash, vk_id, vk_access_token, vk_refresh_token, vk_token_expires_at
+    ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7
+    ) RETURNING id`
+	err := u.db.QueryRow(
+		query,
+		user.Nickname,
+		user.Email,
+		user.PasswordHash,
+		user.VkID,
+		user.VkAccessToken,
+		user.VkRefreshToken,
+		user.VkTokenExpiresAt,
+	).Scan(&userID)
+
 	if err != nil {
 		return 0, err
 	}
@@ -63,6 +90,20 @@ func (u *User) GetUserByEmail(email string) (*entity.User, error) {
 	query := `SELECT id, nickname, email, password_hash, vk_id, vk_access_token, vk_refresh_token, vk_token_expires_at
 			  FROM "user" WHERE email = $1`
 	err := u.db.Get(&user, query, email)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, repo.ErrUserNotFound
+		}
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (u *User) GetUserByVkID(vkID int) (*entity.User, error) {
+	var user entity.User
+	query := `SELECT id, nickname, email, password_hash, vk_id, vk_access_token, vk_refresh_token, vk_token_expires_at
+			  FROM "user" WHERE vk_id = $1`
+	err := u.db.Get(&user, query, vkID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, repo.ErrUserNotFound
@@ -124,7 +165,7 @@ func (u *User) UpdateProfile(userID int, profile *entity.UpdateProfileRequest) e
 	return nil
 }
 
-func (u *User) UpdateVkAuth(userID int, vkID, accessToken, refreshToken string, expiresAt int64) error {
+func (u *User) UpdateVkAuth(userID, vkID int, accessToken, refreshToken string, expiresAt int64) error {
 	expiresTime := time.Unix(expiresAt, 0)
 
 	query := `UPDATE "user" SET vk_id = $1, vk_access_token = $2, vk_refresh_token = $3, vk_token_expires_at = $4 WHERE id = $5`

@@ -12,16 +12,26 @@ import (
 )
 
 type User struct {
-	userUseCase   usecase.User
-	authManager   utils.Auth
-	cookieManager utils.Cookie
+	userUseCase     usecase.User
+	authManager     utils.Auth
+	cookieManager   utils.Cookie
+	successLoginURL string
+	errorLoginURL   string
 }
 
-func NewUser(userUseCase usecase.User, authManager utils.Auth, cookieManager utils.Cookie) *User {
+func NewUser(
+	userUseCase usecase.User,
+	authManager utils.Auth,
+	cookieManager utils.Cookie,
+	successLoginURL string,
+	errorLoginURL string,
+) *User {
 	return &User{
-		userUseCase:   userUseCase,
-		authManager:   authManager,
-		cookieManager: cookieManager,
+		userUseCase:     userUseCase,
+		authManager:     authManager,
+		cookieManager:   cookieManager,
+		successLoginURL: successLoginURL,
+		errorLoginURL:   errorLoginURL,
 	}
 }
 
@@ -30,9 +40,11 @@ func (u *User) Configure(server *echo.Group) {
 	server.POST("/login", u.Login)
 	server.GET("/me", u.Me)
 	server.POST("/logout", u.Logout)
-	server.PUT("/update-password", u.UpdatePassword)
-	server.PUT("/update-profile", u.UpdateProfile)
+	server.PUT("/update/password", u.UpdatePassword)
+	server.PUT("/update/profile", u.UpdateProfile)
 	server.GET("/profile", u.GetProfile)
+	server.GET("/vk/auth", u.VKAuthURL)
+	server.GET("/vk/callback", u.VKCallback)
 }
 
 func (u *User) Register(c echo.Context) error {
@@ -53,16 +65,29 @@ func (u *User) Register(c echo.Context) error {
 
 	userID, err := u.userUseCase.Register(&registerRequest)
 	if err != nil {
-		if errors.Is(err, repo.ErrEmailExists) {
+		switch {
+		case errors.Is(err, usecase.ErrEmailAlreadyExists):
 			return c.JSON(http.StatusConflict, echo.Map{
 				"error": "Пользователь с таким email уже существует",
 			})
+		case errors.Is(err, usecase.ErrInvalidEmail):
+			return c.JSON(http.StatusBadRequest, echo.Map{
+				"error": "Некорректный формат email",
+			})
+		case errors.Is(err, usecase.ErrPasswordTooShort):
+			return c.JSON(http.StatusBadRequest, echo.Map{
+				"error": "Пароль слишком короткий, минимальная длина - 8 символов",
+			})
+		case errors.Is(err, usecase.ErrPasswordTooLong):
+			return c.JSON(http.StatusBadRequest, echo.Map{
+				"error": "Пароль слишком длинный, максимальная длина - 64 символа",
+			})
+		default:
+			c.Logger().Errorf("Ошибка при регистрации пользователя: %v", err)
+			return c.JSON(http.StatusInternalServerError, echo.Map{
+				"error": "Произошла непредвиденная ошибка",
+			})
 		}
-
-		c.Logger().Errorf("Ошибка при регистрации пользователя: %v", err)
-		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": "Произошла непредвиденная ошибка",
-		})
 	}
 
 	token, err := u.authManager.CreateToken(userID)
@@ -278,7 +303,7 @@ func (u *User) GetProfile(c echo.Context) error {
 			"error": "Пользователь не авторизован",
 		})
 	case err != nil:
-		c.Logger().Errorf("Ошибка при проверке авторизации пользователя: %v", err)
+		c.Logger().Errorf("Ошибка при проверке авторизации пользов��теля: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{
 			"error": "Произошла непредвиденная ошибка",
 		})
@@ -299,4 +324,45 @@ func (u *User) GetProfile(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, profile)
+}
+
+func (u *User) VKAuthURL(c echo.Context) error {
+	authURL := u.userUseCase.GetVKAuthURL()
+	return c.JSON(http.StatusOK, echo.Map{
+		"auth_url": authURL,
+	})
+}
+
+func (u *User) VKCallback(c echo.Context) error {
+	code := c.QueryParam("code")
+	if code == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Параметры code и redirect_uri обязательны",
+		})
+	}
+
+	userID, err := u.userUseCase.HandleVKCallback(code)
+	if err != nil {
+		c.Logger().Errorf("Ошибка при обработке VK callback: %v", err)
+		errorMessage := "Произошла непредвиденная ошибка"
+
+		if errors.Is(err, usecase.ErrVKAuthFailed) {
+			errorMessage = "Ошибка авторизации через ВКонтакте"
+		}
+
+		// Перенаправляем на страницу с ошибкой
+		return c.Redirect(http.StatusFound, u.errorLoginURL+"?err="+errorMessage)
+	}
+
+	token, err := u.authManager.CreateToken(userID)
+	if err != nil {
+		c.Logger().Errorf("Ошибка при создании токена: %v", err)
+		// Перенаправляем на страницу с ошибкой
+		return c.Redirect(http.StatusFound, u.errorLoginURL+"?err="+"Произошла непредвиденная ошибка")
+	}
+
+	expires := time.Now().AddDate(1, 0, 0)
+	c.SetCookie(u.cookieManager.SetSessionCookie(token, expires))
+
+	return c.Redirect(http.StatusFound, u.successLoginURL)
 }

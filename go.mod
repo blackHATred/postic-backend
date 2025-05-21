@@ -17,6 +17,9 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/minio/minio-go/v7 v7.0.90
 	github.com/segmentio/kafka-go v0.4.48
+	github.com/vmihailenco/msgpack/v5 v5.4.1
+	golang.org/x/crypto v0.38.0
+	golang.org/x/oauth2 v0.30.0
 	google.golang.org/grpc v1.72.0
 )
 
@@ -36,12 +39,11 @@ require (
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
-	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
-	golang.org/x/crypto v0.38.0 // indirect
 	golang.org/x/net v0.40.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.25.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
 	google.golang.org/genproto v0.0.0-20220503193339-ba3ae3f07e29 // indirect
+	google.golang.org/protobuf v1.36.5 // indirect
 )

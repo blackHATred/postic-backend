@@ -41,6 +41,13 @@ func main() {
 	corsOrigin := os.Getenv("CORS_ORIGIN")
 	summarizeURL := os.Getenv("SUMMARIZE_URL")
 	replyIdeasURL := os.Getenv("REPLY_IDEAS_URL")
+	vkClientID := os.Getenv("VK_CLIENT_ID")
+	vkClientSecret := os.Getenv("VK_CLIENT_SECRET")
+	vkRedirectURL := os.Getenv("VK_REDIRECT_URL")
+	vkSuccessURL := os.Getenv("VK_FRONTEND_SUCCESS_REDIRECT_URL")
+	vkErrorURL := os.Getenv("VK_FRONTEND_ERROR_REDIRECT_URL")
+
+	vkAuth := utils.NewVKOAuth(vkClientID, vkClientSecret, vkRedirectURL)
 
 	// cockroach
 	DBConn, err := connector.GetCockroachConnector(dbConnectDSN) // примерный вид dsn: "user=root dbname=defaultdb sslmode=disable"
@@ -103,7 +110,7 @@ func main() {
 		telegramPostPlatformUseCase,
 		vkPostPlatformUseCase,
 	)
-	userUseCase := service.NewUser(userRepo)
+	userUseCase := service.NewUser(userRepo, vkAuth)
 	uploadUseCase := service.NewUpload(uploadRepo)
 	teamUseCase := service.NewTeam(teamRepo)
 	commentUseCase := service.NewComment(
@@ -122,7 +129,7 @@ func main() {
 	cookieManager := utils.NewCookieManager(false)
 	authManager := utils.NewAuthManager([]byte(jwtSecret), userRepo, time.Hour*24*365)
 	postDelivery := delivery.NewPost(authManager, postUseCase)
-	userDelivery := delivery.NewUser(userUseCase, authManager, cookieManager)
+	userDelivery := delivery.NewUser(userUseCase, authManager, cookieManager, vkSuccessURL, vkErrorURL)
 	uploadDelivery := delivery.NewUpload(uploadUseCase, authManager)
 	teamDelivery := delivery.NewTeam(teamUseCase, authManager)
 	commentDelivery := delivery.NewComment(sysCtx, commentUseCase, authManager)
