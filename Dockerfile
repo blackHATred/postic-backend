@@ -8,6 +8,7 @@ WORKDIR /go/src/app
 COPY . .
 
 # Скачиваем зависимости
+RUN go mod tidy
 RUN go mod download
 
 # Собираем приложение
@@ -26,7 +27,7 @@ COPY --from=builder /go/bin/app /app/app
 RUN chmod +x /app/app
 
 # Объявляем порт
-EXPOSE 8080
+EXPOSE 80
 
 # Запускаем приложение
 CMD ["./app"]

@@ -167,6 +167,23 @@ func (t *Team) GetTGChannelByDiscussionId(discussionId int) (*entity.TGChannel, 
 	return &tgChannel, nil
 }
 
+func (t *Team) GetTGChannelByChannelID(channelID int) (*entity.TGChannel, error) {
+	var tgChannel entity.TGChannel
+	err := t.db.QueryRow(
+		"SELECT id, team_id, channel_id, discussion_id FROM channel_tg WHERE channel_id = $1",
+		channelID,
+	).Scan(&tgChannel.ID, &tgChannel.TeamID, &tgChannel.ChannelID, &tgChannel.DiscussionID)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, repo.ErrTGChannelNotFound
+		}
+		return nil, err
+	}
+
+	return &tgChannel, nil
+}
+
 func (t *Team) GetTeamIDByPostUnionID(postUnionID int) (int, error) {
 	var teamId int
 	err := t.db.Get(&teamId, "SELECT team_id FROM post_union WHERE id = $1", postUnionID)
