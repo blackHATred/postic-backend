@@ -439,4 +439,5 @@ func (p *Post) deletePostAsync(post *entity.PostUnion, actionId int, tgChannel *
 	if err != nil {
 		log.Errorf("error while deleting post platform: %v", err)
 	}
+	p.updatePostActionStatus(actionId, "success", "")
 }
