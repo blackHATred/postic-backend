@@ -9,4 +9,6 @@ type Upload interface {
 	GetUploadInfo(id int) (*entity.Upload, error)
 	// UploadFile загружает файл
 	UploadFile(upload *entity.Upload) (int, error)
+	// DeleteUpload удаляет файл по ID
+	DeleteUpload(id int) error
 }

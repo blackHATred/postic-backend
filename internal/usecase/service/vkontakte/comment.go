@@ -3,33 +3,70 @@ package vkontakte
 import (
 	"context"
 	"fmt"
-	"github.com/SevereCloud/vksdk/v3/api"
-	"github.com/labstack/gommon/log"
+	"io"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
+	"postic-backend/internal/usecase"
+	"postic-backend/pkg/retry"
 	"strings"
 	"time"
+
+	"github.com/SevereCloud/vksdk/v3/api"
+	"github.com/labstack/gommon/log"
 )
 
 type Comment struct {
-	commentRepo repo.Comment
-	teamRepo    repo.Team
-	uploadRepo  repo.Upload
-	eventRepo   repo.CommentEventRepository
+	commentRepo   repo.Comment
+	teamRepo      repo.Team
+	uploadUseCase usecase.Upload
+	eventRepo     repo.CommentEventRepository
 }
 
 func NewVkontakteComment(
 	commentRepo repo.Comment,
 	teamRepo repo.Team,
-	uploadRepo repo.Upload,
+	uploadUseCase usecase.Upload,
 	eventRepo repo.CommentEventRepository,
 ) *Comment {
 	return &Comment{
-		commentRepo: commentRepo,
-		teamRepo:    teamRepo,
-		uploadRepo:  uploadRepo,
-		eventRepo:   eventRepo,
+		commentRepo:   commentRepo,
+		teamRepo:      teamRepo,
+		uploadUseCase: uploadUseCase,
+		eventRepo:     eventRepo,
 	}
+}
+
+func (c *Comment) uploadPhoto(vk *api.VK, groupId int, upload *entity.Upload) (string, error) {
+	var uploadResponse api.PhotosSaveWallPhotoResponse
+	err := retry.Retry(func() error {
+		var err error
+		upload.RawBytes.Seek(0, io.SeekStart) // Сбрасываем указатель на начало файла на всякий случай
+		uploadResponse, err = vk.UploadGroupWallPhoto(groupId, upload.RawBytes)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(uploadResponse) == 0 {
+		return "", fmt.Errorf("no photos uploaded")
+	}
+	return fmt.Sprintf("photo%d_%d", uploadResponse[0].OwnerID, uploadResponse[0].ID), nil
+}
+
+func (c *Comment) uploadVideo(vk *api.VK, groupId int, upload *entity.Upload) (string, error) {
+	var videoSaveResponse api.VideoSaveResponse
+	err := retry.Retry(func() error {
+		var err error
+		upload.RawBytes.Seek(0, io.SeekStart) // Сбрасываем указатель на начало файла на всякий случай
+		videoSaveResponse, err = vk.UploadVideo(api.Params{
+			"group_id": groupId,
+		}, upload.RawBytes)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("video%d_%d", videoSaveResponse.OwnerID, videoSaveResponse.VideoID), nil
 }
 
 func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error) {
@@ -62,50 +99,49 @@ func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 	// Если есть вложения, обрабатываем их
 	attachments := make([]string, 0)
 	for _, attachment := range request.Attachments {
-		upload, err := c.uploadRepo.GetUpload(attachment)
+		upload, err := c.uploadUseCase.GetUpload(attachment)
 		if err != nil {
 			log.Errorf("Failed to get upload: %v", err)
 			return 0, err
 		}
 		switch upload.FileType {
 		case "photo":
-			photos, err := vk.UploadWallPhoto(upload.RawBytes)
+			photoAttachment, err := c.uploadPhoto(vk, vkChannel.GroupID, upload)
 			if err != nil {
 				log.Errorf("Failed to upload photo: %v", err)
 				return 0, err
 			}
-			if len(photos) == 0 {
-				log.Error("No photos returned from upload")
-				return 0, fmt.Errorf("no photos returned from upload")
-			}
-			photo := photos[len(photos)-1]
-			attachments = append(attachments, fmt.Sprintf("photo%d_%d", photo.OwnerID, photo.ID))
+			attachments = append(attachments, photoAttachment)
 		case "video":
-			video, err := vk.UploadVideo(api.Params{
-				"name":        "Video Reply",
-				"description": "Uploaded via API",
-				"wallpost":    0,
-				"group_id":    vkChannel.GroupID,
-			}, upload.RawBytes)
+			videoAttachment, err := c.uploadVideo(vk, vkChannel.GroupID, upload)
 			if err != nil {
 				log.Errorf("Failed to upload video: %v", err)
 				return 0, err
 			}
-			attachments = append(attachments, fmt.Sprintf("video%d_%d", video.OwnerID, video.VideoID))
+			attachments = append(attachments, videoAttachment)
 		default:
 			log.Warnf("Unsupported attachment type: %s", upload.FileType)
 		}
 	}
-
-	// Добавляем вложения в параметры, если они есть
 	if len(attachments) > 0 {
 		params["attachments"] = strings.Join(attachments, ",")
 	}
-
-	// Отправляем ответ на комментарий
-	response, err := vk.WallCreateComment(params)
+	var response api.WallCreateCommentResponse
+	err = retry.Retry(func() error {
+		var err error
+		response, err = vk.WallCreateComment(params)
+		return err
+	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to reply to VK comment: %w", err)
+	}
+	// Подготавливаем вложения для сохранения в БД
+	commentAttachments := make([]*entity.Upload, 0)
+	for _, attachment := range request.Attachments {
+		upload := &entity.Upload{
+			ID: attachment,
+		}
+		commentAttachments = append(commentAttachments, upload)
 	}
 
 	// Сохраняем комментарий в базе данных
@@ -122,15 +158,8 @@ func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 		IsTeamReply:       true,
 		ReplyToCommentID:  request.CommentID,
 		CreatedAt:         time.Now(),
-		Attachments:       make([]*entity.Upload, 0),
+		Attachments:       commentAttachments, // Передаем вложения для сохранения в БД
 	})
-	// добавляем аттачи
-	for _, attachment := range request.Attachments {
-		upload := &entity.Upload{
-			ID: attachment,
-		}
-		comment.Attachments = append(comment.Attachments, upload)
-	}
 	if err != nil {
 		log.Errorf("Failed to save comment to database: %v", err)
 		return 0, err
@@ -172,7 +201,10 @@ func (c *Comment) DeleteComment(request *entity.DeleteCommentRequest) error {
 		"comment_id": comment.CommentPlatformID,
 	}
 
-	_, err = vk.WallDeleteComment(params)
+	err = retry.Retry(func() error {
+		_, err := vk.WallDeleteComment(params)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("failed to delete VK comment: %w", err)
 	}

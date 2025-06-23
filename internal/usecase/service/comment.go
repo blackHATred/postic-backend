@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/labstack/gommon/log"
 	"net/http"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
 	"slices"
+	"strings"
+
+	"github.com/labstack/gommon/log"
 )
 
 type Comment struct {
@@ -78,7 +80,7 @@ func (c *Comment) ReplyIdeas(request *entity.ReplyIdeasRequest) (*entity.ReplyId
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest("GET", c.replyIdeasURL, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", c.replyIdeasURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +93,6 @@ func (c *Comment) ReplyIdeas(request *entity.ReplyIdeasRequest) (*entity.ReplyId
 	}
 
 	type ServerAnswer struct {
-		Warnings      string `json:"warnings"`
 		NoAnswer      bool   `json:"no_answer"`
 		SupportNeeded bool   `json:"support_needed"`
 		Answer0       string `json:"answer_0,omitempty"`
@@ -167,7 +168,7 @@ func (c *Comment) GetLastComments(request *entity.GetCommentsRequest) ([]*entity
 	// Получаем комментарии из репозитория, используя текущее время как верхнюю границу
 	// для получения самых последних комментариев
 	var comments []*entity.Comment
-	if request.MarkedAsTicket == nil || *request.MarkedAsTicket == false {
+	if request.MarkedAsTicket == nil || !*request.MarkedAsTicket {
 		comments, err = c.commentRepo.GetComments(request.TeamID, request.PostUnionID, request.Offset, request.Before, request.Limit)
 	} else {
 		comments, err = c.commentRepo.GetTicketComments(request.TeamID, request.Offset, request.Before, request.Limit)
@@ -194,20 +195,24 @@ func (c *Comment) GetSummarize(request *entity.SummarizeCommentRequest) (*entity
 		return nil, err
 	}
 	var payload struct {
-		Comments []string `json:"comments"`
+		Comments string `json:"comments"`
 	}
-	for _, comment := range comments {
-		if comment.Text == "" {
-			continue
+	if len(comments) == 0 {
+		payload.Comments = "Нет комментариев для суммаризации"
+	} else {
+		var builder strings.Builder
+		for _, comment := range comments {
+			builder.WriteString(comment.Text)
+			builder.WriteString("\n\n")
 		}
-		payload.Comments = append(payload.Comments, comment.Text)
+		payload.Comments = builder.String()
 	}
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest("GET", c.summarizeURL, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", c.summarizeURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, err
 	}
@@ -295,6 +300,12 @@ func (c *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 	if comment.TeamID != request.TeamID {
 		return 0, usecase.ErrUserForbidden
 	}
+
+	// валидация длины текста для платформы
+	if err := request.IsValid(comment.Platform); err != nil {
+		return 0, err
+	}
+
 	// делегируем отправку комментария
 	switch comment.Platform {
 	case "vk":

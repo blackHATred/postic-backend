@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces.yaml
+  - cockroachdb.yaml
+  - minio.yaml
+  - kafka-cluster.yaml
+  - gateway.yaml
+  - vk-event-listener.yaml
+  - telegram-event-listener.yaml
+  - upload-service.yaml
+  - ingress.yaml
+  - cluster-issuer.yaml

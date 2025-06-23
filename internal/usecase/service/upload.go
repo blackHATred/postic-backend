@@ -1,25 +1,29 @@
 package service
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"io"
 	"net/http"
+	"time"
+
+	"github.com/google/uuid"
+
+	uploadgrpc "postic-backend/internal/delivery/grpc/upload-service"
 	"postic-backend/internal/entity"
-	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
 	"strings"
 )
 
 type Upload struct {
-	uploadRepo repo.Upload
+	uploadClient *uploadgrpc.Client
 }
 
-func NewUpload(uploadRepo repo.Upload) usecase.Upload {
+func NewUpload(uploadClient *uploadgrpc.Client) usecase.Upload {
 	return &Upload{
-		uploadRepo: uploadRepo,
+		uploadClient: uploadClient,
 	}
 }
 
@@ -54,7 +58,11 @@ func (u *Upload) UploadFile(upload *entity.Upload) (int, error) {
 		base64.StdEncoding.EncodeToString([]byte(upload.FilePath)),
 		fileExt,
 	)
-	return u.uploadRepo.UploadFile(upload)
+	resp, err := u.uploadClient.UploadFile(context.Background(), upload.FilePath, upload.FileType, derefInt(upload.UserID), upload.RawBytes)
+	if err != nil {
+		return 0, err
+	}
+	return int(resp.Id), nil
 }
 
 // validateMimeType проверяет MIME-тип файла на основе его содержимого
@@ -96,9 +104,35 @@ func validateMimeType(upload *entity.Upload) error {
 }
 
 func (u *Upload) GetUpload(id int) (*entity.Upload, error) {
-	upload, err := u.uploadRepo.GetUpload(id)
+	info, err := u.uploadClient.GetUploadInfo(context.Background(), int64(id))
 	if err != nil {
 		return nil, err
 	}
-	return upload, nil
+	// Получаем размер файла
+	size := info.Size
+	reader := uploadgrpc.NewRemoteReadSeeker(u.uploadClient, context.Background(), int64(id), size)
+	return &entity.Upload{
+		ID:        int(info.Id),
+		FilePath:  info.FilePath,
+		FileType:  info.FileType,
+		UserID:    intPtr(int(info.UserId)),
+		CreatedAt: parseTime(info.CreatedAt),
+		RawBytes:  reader,
+	}, nil
+}
+
+func derefInt(ptr *int) int {
+	if ptr != nil {
+		return *ptr
+	}
+	return 0
+}
+
+func intPtr(i int) *int {
+	return &i
+}
+
+func parseTime(s string) time.Time {
+	t, _ := time.Parse("2006-01-02T15:04:05Z07:00", s)
+	return t
 }

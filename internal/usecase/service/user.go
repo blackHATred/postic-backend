@@ -2,15 +2,16 @@ package service
 
 import (
 	"errors"
-	"github.com/SevereCloud/vksdk/v3/api"
-	"github.com/labstack/gommon/log"
-	"golang.org/x/crypto/bcrypt"
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
 	"regexp"
 	"time"
+
+	"github.com/SevereCloud/vksdk/v3/api"
+	"github.com/labstack/gommon/log"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Регулярное выражение для валидации email
@@ -76,16 +77,15 @@ func (u *User) Register(req *entity.RegisterRequest) (int, error) {
 		Email:        &req.Email,
 		PasswordHash: &password,
 	}
-
 	id, err := u.userRepo.AddUser(user)
 	if err != nil {
 		if errors.Is(err, repo.ErrEmailExists) {
 			return 0, usecase.ErrEmailAlreadyExists
 		}
-		return 0, err
+		return 0, usecase.ErrUserInternal
 	}
 
-	return id, err
+	return id, nil
 }
 
 func (u *User) Login(email, password string) (int, error) {
@@ -93,24 +93,22 @@ func (u *User) Login(email, password string) (int, error) {
 	if err := validateEmail(email); err != nil {
 		return 0, err
 	}
-
 	user, err := u.userRepo.GetUserByEmail(email)
 	if err != nil {
 		if errors.Is(err, repo.ErrUserNotFound) {
-			return 0, repo.ErrInvalidPassword
+			return 0, usecase.ErrInvalidCredentials
 		}
-		return 0, err
+		return 0, usecase.ErrUserInternal
 	}
-
 	// Проверяем пароль пользователя (если есть VK авторизация и нет пароля, позволяем войти)
 	if user.PasswordHash != nil {
 		err = bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(password))
 		if err != nil {
-			return 0, repo.ErrInvalidPassword
+			return 0, usecase.ErrInvalidCredentials
 		}
 	} else if user.VkID == nil {
 		// Если нет ни пароля, ни авторизации через VK, то не разрешаем вход
-		return 0, repo.ErrInvalidPassword
+		return 0, usecase.ErrInvalidCredentials
 	}
 
 	return user.ID, nil
@@ -119,7 +117,10 @@ func (u *User) Login(email, password string) (int, error) {
 func (u *User) GetUser(userID int) (*entity.UserProfile, error) {
 	user, err := u.userRepo.GetUser(userID)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, repo.ErrUserNotFound) {
+			return nil, usecase.ErrUserNotExists
+		}
+		return nil, usecase.ErrUserInternal
 	}
 	email := ""
 	if user.Email != nil {
@@ -138,27 +139,34 @@ func (u *User) UpdatePassword(userID int, oldPassword, newPassword string) error
 	if err := validatePassword(newPassword); err != nil {
 		return err
 	}
-
 	user, err := u.userRepo.GetUser(userID)
 	if err != nil {
-		return err
+		if errors.Is(err, repo.ErrUserNotFound) {
+			return usecase.ErrUserNotExists
+		}
+		return usecase.ErrUserInternal
 	}
 
 	// Проверяем старый пароль, если он установлен
 	if user.PasswordHash != nil {
 		err = bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(oldPassword))
 		if err != nil {
-			return repo.ErrInvalidPassword
+			return usecase.ErrInvalidCredentials
 		}
 	}
 
 	// Хешируем новый пароль
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
-		return err
+		return usecase.ErrUserInternal
 	}
 
-	return u.userRepo.UpdatePassword(userID, string(hashedPassword))
+	err = u.userRepo.UpdatePassword(userID, string(hashedPassword))
+	if err != nil {
+		return usecase.ErrUserInternal
+	}
+
+	return nil
 }
 
 func (u *User) UpdateProfile(userID int, profile *entity.UpdateProfileRequest) error {
@@ -169,7 +177,15 @@ func (u *User) UpdateProfile(userID int, profile *entity.UpdateProfileRequest) e
 		}
 	}
 
-	return u.userRepo.UpdateProfile(userID, profile)
+	err := u.userRepo.UpdateProfile(userID, profile)
+	if err != nil {
+		if errors.Is(err, repo.ErrEmailExists) {
+			return usecase.ErrEmailAlreadyExists
+		}
+		return usecase.ErrUserInternal
+	}
+
+	return nil
 }
 
 func (u *User) GetVKAuthURL() string {
@@ -190,6 +206,7 @@ func (u *User) HandleVKCallback(code string) (int, error) {
 		log.Errorf("Failed to get user info: %v", err)
 		return 0, usecase.ErrVKAuthFailed
 	}
+
 	// если пользователя нет, то регистрируем
 	// если есть - авторизуемся
 	user, err := u.userRepo.GetUserByVkID(response[0].ID)
@@ -207,11 +224,11 @@ func (u *User) HandleVKCallback(code string) (int, error) {
 			}
 			id, err := u.userRepo.AddUser(user)
 			if err != nil {
-				return 0, err
+				return 0, usecase.ErrUserInternal
 			}
 			return id, nil
 		}
-		return 0, err
+		return 0, usecase.ErrUserInternal
 	}
 	// Обновляем токены
 	err = u.userRepo.UpdateVkAuth(user.ID, response[0].ID, tok.AccessToken, tok.RefreshToken, time.Unix(tok.ExpiresIn, 0).Unix())

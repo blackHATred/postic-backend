@@ -14,4 +14,8 @@ type VkontakteListener interface {
 	GetUnwatchedGroups(duration time.Duration) ([]int, error)
 	// UpdateGroupLastUpdate обновляет время последнего обновления группы до текущего
 	UpdateGroupLastUpdate(teamID int) error
+	// GetLastEventTS возвращает timestamp последнего обработанного события для группы
+	GetLastEventTS(teamID int) (string, error)
+	// SetLastEventTS устанавливает timestamp последнего обработанного события для группы
+	SetLastEventTS(teamID int, ts string) error
 }

@@ -1,6 +1,10 @@
 package entity
 
-import "time"
+import (
+	"errors"
+	"time"
+	"unicode/utf8"
+)
 
 type JustTextComment struct {
 	Text string `json:"text" db:"text"`
@@ -49,6 +53,27 @@ type ReplyCommentRequest struct {
 	CommentID   int    `json:"comment_id"`
 	Text        string `json:"text"`
 	Attachments []int  `json:"attachments"`
+}
+
+func (r *ReplyCommentRequest) IsValid(platform string) error {
+	if r.Text == "" && len(r.Attachments) == 0 {
+		return errors.New("text and attachments are empty")
+	}
+
+	switch platform {
+	case "tg":
+		if len(r.Attachments) == 0 && utf8.RuneCountInString(r.Text) > 4096 {
+			return errors.New("text is too long for telegram")
+		}
+		if len(r.Attachments) > 0 && utf8.RuneCountInString(r.Text) > 1024 {
+			return errors.New("text is too long for telegram with attachments")
+		}
+	case "vk":
+		if utf8.RuneCountInString(r.Text) > 4096 {
+			return errors.New("text is too long for vkontakte")
+		}
+	}
+	return nil
 }
 
 type SummarizeCommentRequest struct {

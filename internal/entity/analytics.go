@@ -41,15 +41,27 @@ type UsersKPIResponse struct {
 }
 
 type PostPlatformStats struct {
-	ID          int        `json:"-" db:"id"`
-	TeamID      int        `json:"team_id" db:"team_id"`
-	PostUnionID int        `json:"post_union_id" db:"post_union_id"`
-	PeriodStart time.Time  `json:"-" db:"period_start"`
-	PeriodEnd   *time.Time `json:"-" db:"period_end"`
-	Platform    string     `json:"platform" db:"platform"`
-	Views       int        `json:"views" db:"views"`
-	Comments    int        `json:"comments"` // В базе данных прямо не хранится, надо считать из смежных таблиц
-	Reactions   int        `json:"reactions" db:"reactions"`
+	ID          int       `json:"-" db:"id"`
+	TeamID      int       `json:"team_id" db:"team_id"`
+	PostUnionID int       `json:"post_union_id" db:"post_union_id"`
+	RecordedAt  time.Time `json:"recorded_at" db:"recorded_at"`
+	Platform    string    `json:"platform" db:"platform"`
+	Views       int       `json:"views" db:"views"`
+	Comments    int       `json:"comments"` // В базе данных прямо не хранится, надо считать из смежных таблиц
+	Reactions   int       `json:"reactions" db:"reactions"`
+}
+
+type StatsUpdateTask struct {
+	ID                    int        `json:"id" db:"id"`
+	PostUnionID           int        `json:"post_union_id" db:"post_union_id"`
+	Platform              string     `json:"platform" db:"platform"`
+	NextUpdateAt          time.Time  `json:"next_update_at" db:"next_update_at"`
+	LastUpdatedAt         *time.Time `json:"last_updated_at" db:"last_updated_at"`
+	UpdateIntervalMinutes int        `json:"update_interval_minutes" db:"update_interval_minutes"`
+	IsLocked              bool       `json:"is_locked" db:"is_locked"`
+	LockedAt              *time.Time `json:"locked_at" db:"locked_at"`
+	LockedBy              *string    `json:"locked_by" db:"locked_by"`
+	CreatedAt             time.Time  `json:"created_at" db:"created_at"`
 }
 
 type PlatformStats struct {

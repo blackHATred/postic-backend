@@ -33,31 +33,40 @@ func (a *Analytics) UpdateStat(postUnionID int) error {
 		return fmt.Errorf("failed to get post by ID: %w", err)
 	}
 
-	stats := &entity.PostPlatformStats{
-		TeamID:      post.TeamID,
-		PostUnionID: postUnionID,
-		Platform:    "tg",
-	}
-
 	// Получаем количество комментариев к посту
 	commentsCount, err := a.analyticsRepo.CommentsCount(postUnionID)
 	if err != nil {
 		return fmt.Errorf("failed to get comments count: %w", err)
 	}
-	stats.Comments = commentsCount
 
 	// Получаем ориентировочное количество просмотров
 	start := post.CreatedAt
 	if post.PubDate != nil {
 		start = *post.PubDate
 	}
-	views := EstimateViews(stats.Reactions, stats.Comments, time.Since(start).Hours())
-	stats.Views = views
 
-	// Обновляем статистику
-	err = a.analyticsRepo.UpdateLastPlatformStats(stats, "tg")
+	// Получаем текущую статистику для расчета реакций
+	currentStats, err := a.analyticsRepo.GetPostPlatformStatsByPostUnionID(postUnionID, "tg")
+	reactions := 0
+	if err == nil {
+		reactions = currentStats.Reactions
+	}
+
+	views := EstimateViews(reactions, commentsCount, time.Since(start).Hours())
+
+	stats := &entity.PostPlatformStats{
+		TeamID:      post.TeamID,
+		PostUnionID: postUnionID,
+		Platform:    "tg",
+		RecordedAt:  time.Now(),
+		Views:       views,
+		Reactions:   reactions,
+	}
+
+	// Сохраняем новую статистику
+	err = a.analyticsRepo.SavePostPlatformStats(stats)
 	if err != nil {
-		return fmt.Errorf("failed to edit post platform stats: %w", err)
+		return fmt.Errorf("failed to save post platform stats: %w", err)
 	}
 
 	return nil

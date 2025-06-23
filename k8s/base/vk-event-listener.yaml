@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vk-event-listener
+  namespace: postic
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Гарантирует, что старый под удаляется перед созданием нового
+  selector:
+    matchLabels:
+      app: vk-event-listener
+  template:
+    metadata:
+      labels:
+        app: vk-event-listener
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+        - name: vk-event-listener
+          image: ghcr.io/blackhatred/postic-vk-listener:latest
+          env:
+            - name: DB_CONNECT_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: cockroachdb-secret
+                  key: db-connect-dsn
+            - name: KAFKA_BROKERS
+              value: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
+            - name: MINIO_ENDPOINT
+              value: "minio.minio.svc.cluster.local:9000"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: minio-user
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: minio-password
+            - name: MINIO_USE_SSL
+              value: "false"
+            - name: UPLOAD_SERVICE_ADDR
+              value: "upload-service.postic.svc.cluster.local:50052"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vk-event-listener
+  namespace: postic
+spec:
+  ports:
+    - port: 8080
+      name: http
+  selector:
+    app: vk-event-listener
+  type: ClusterIP

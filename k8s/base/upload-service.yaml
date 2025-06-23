@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upload-service
+  namespace: postic
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: upload-service
+  template:
+    metadata:
+      labels:
+        app: upload-service
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+        - name: upload-service
+          image: ghcr.io/blackhatred/postic-upload-service:latest
+          env:
+            - name: DB_CONNECT_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: cockroachdb-secret
+                  key: db-connect-dsn
+            - name: MINIO_ENDPOINT
+              value: "minio.minio.svc.cluster.local:9000"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: minio-user
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: minio-password
+            - name: MINIO_USE_SSL
+              value: "false"
+            - name: UPLOAD_SERVICE_GRPC_PORT
+              value: "50052"
+          ports:
+            - containerPort: 50052
+              name: grpc
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upload-service
+  namespace: postic
+spec:
+  selector:
+    app: upload-service
+  ports:
+    - protocol: TCP
+      port: 50052
+      targetPort: 50052

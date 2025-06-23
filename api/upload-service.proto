@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package uploadservice;
+option go_package = "./;uploadservice";
+
+service UploadService {
+  // Загрузка файла чанками
+  rpc UploadFile(stream UploadFileChunk) returns (UploadFileResponse);
+  // Получение чанка файла по offset/length
+  rpc DownloadChunk(DownloadChunkRequest) returns (DownloadChunkResponse);
+  // Получение информации о файле
+  rpc GetUploadInfo(GetUploadInfoRequest) returns (GetUploadInfoResponse);
+  // Удаление файла
+  rpc DeleteUpload(DeleteUploadRequest) returns (DeleteUploadResponse);
+}
+
+message UploadFileChunk {
+  int64 id = 1; // для продолжения загрузки (опционально)
+  int64 offset = 2;
+  bytes data = 3;
+  string file_type = 4;
+  int32 user_id = 5;
+  string file_name = 6;
+}
+
+message UploadFileResponse {
+  int64 id = 1;
+  string file_path = 2;
+}
+
+message DownloadChunkRequest {
+  int64 id = 1;
+  int64 offset = 2;
+  int64 length = 3;
+}
+
+message DownloadChunkResponse {
+  bytes data = 1;
+  int64 offset = 2;
+  int64 total_size = 3;
+}
+
+message GetUploadInfoRequest {
+  int64 id = 1;
+}
+
+message GetUploadInfoResponse {
+  int64 id = 1;
+  string file_path = 2;
+  string file_type = 3;
+  int32 user_id = 4;
+  int64 size = 5;
+  string created_at = 6;
+}
+
+message DeleteUploadRequest {
+  int64 id = 1;
+}
+
+message DeleteUploadResponse {
+  bool success = 1;
+}

@@ -5,13 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/SevereCloud/vksdk/v3/api"
-	"github.com/SevereCloud/vksdk/v3/events"
-	"github.com/SevereCloud/vksdk/v3/longpoll-bot"
-	"github.com/SevereCloud/vksdk/v3/object"
-	"github.com/gabriel-vasile/mimetype"
-	"github.com/google/uuid"
-	"github.com/labstack/gommon/log"
 	"io"
 	"net/http"
 	"postic-backend/internal/entity"
@@ -20,7 +13,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/SevereCloud/vksdk/v3/api"
+	"github.com/SevereCloud/vksdk/v3/events"
+	longpoll "github.com/SevereCloud/vksdk/v3/longpoll-bot"
+	"github.com/SevereCloud/vksdk/v3/object"
+	"github.com/gabriel-vasile/mimetype"
+	"github.com/google/uuid"
+	"github.com/labstack/gommon/log"
 )
+
+const vkVideoBaseURL = "https://vk.com/video%d_%d"
 
 type EventListener struct {
 	ctx                   context.Context
@@ -28,7 +31,7 @@ type EventListener struct {
 	vkontakteListenerRepo repo.VkontakteListener
 	teamRepo              repo.Team
 	postRepo              repo.Post
-	uploadRepo            repo.Upload
+	uploadUseCase         usecase.Upload
 	commentRepo           repo.Comment
 	mu                    sync.Mutex
 	eventRepo             repo.CommentEventRepository // Kafka-репозиторий событий
@@ -42,7 +45,7 @@ func NewVKEventListener(
 	vkontakteListenerRepo repo.VkontakteListener,
 	teamRepo repo.Team,
 	postRepo repo.Post,
-	uploadRepo repo.Upload,
+	uploadUseCase usecase.Upload,
 	commentRepo repo.Comment,
 	eventRepo repo.CommentEventRepository,
 ) usecase.Listener {
@@ -53,7 +56,7 @@ func NewVKEventListener(
 		vkontakteListenerRepo: vkontakteListenerRepo,
 		teamRepo:              teamRepo,
 		postRepo:              postRepo,
-		uploadRepo:            uploadRepo,
+		uploadUseCase:         uploadUseCase,
 		commentRepo:           commentRepo,
 		eventRepo:             eventRepo,
 		lpClients:             make(map[int]*longpoll.LongPoll),
@@ -130,7 +133,6 @@ func (e *EventListener) checkForUnwatchedGroups() {
 			log.Errorf("Failed to update group last update timestamp: %e", err)
 			continue
 		}
-
 		// Настраиваем лонгполл для команды, если его еще нет
 		e.mu.Lock()
 		if _, exists := e.lpClients[teamID]; !exists {
@@ -141,6 +143,17 @@ func (e *EventListener) checkForUnwatchedGroups() {
 				e.mu.Unlock()
 				continue
 			}
+
+			// Получаем последний сохранённый timestamp для этой команды
+			lastEventTS, err := e.vkontakteListenerRepo.GetLastEventTS(teamID)
+			if err != nil {
+				log.Errorf("Failed to get last event timestamp for team %d: %v", teamID, err)
+				lastEventTS = "0" // Используем начальное значение по умолчанию
+			}
+
+			// Устанавливаем timestamp для продолжения с последнего обработанного события
+			lp.Ts = lastEventTS
+			log.Infof("Starting VK longpoll for team %d from timestamp %s", teamID, lastEventTS)
 
 			e.setupLongPollHandlers(lp, teamID)
 
@@ -163,6 +176,13 @@ func (e *EventListener) checkForUnwatchedGroups() {
 }
 
 func (e *EventListener) setupLongPollHandlers(lp *longpoll.LongPoll, teamID int) {
+	// Сохраняем timestamp после обработки каждого события
+	lp.FullResponse(func(resp longpoll.Response) {
+		if resp.Ts != "" {
+			e.saveLastEventTS(teamID, resp.Ts)
+		}
+	})
+
 	lp.WallReplyNew(func(ctx context.Context, object events.WallReplyNewObject) {
 		e.wallReplyNewHandler(ctx, object, teamID)
 	})
@@ -530,26 +550,27 @@ func (e *EventListener) processVKAttachments(attachments []object.WallCommentAtt
 			log.Errorf("Failed to get file content: %v", err)
 			return nil, nil, err
 		}
-		// Читаем содержимое в буфер
-		var buf bytes.Buffer
-		tee := io.TeeReader(resp.Body, &buf)
-
+		// Читаем всё содержимое в память
+		data, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			log.Errorf("Failed to read file content: %v", err)
+			return nil, nil, err
+		}
 		// Определяем MIME-тип
-		mime, err := mimetype.DetectReader(tee)
+		mime := mimetype.Detect(data)
 		if err != nil {
 			log.Errorf("Failed to detect MIME type: %v", err)
 			return nil, nil, err
 		}
 		extension := strings.TrimPrefix(mime.Extension(), ".")
-
 		// Сохраняем в S3
 		upload := &entity.Upload{
-			RawBytes: bytes.NewReader(buf.Bytes()),
+			RawBytes: bytes.NewReader(data),
 			FilePath: fmt.Sprintf("vk/%s.%s", uuid.New().String(), extension),
 			FileType: fileType,
 		}
-		uploadFileId, err := e.uploadRepo.UploadFile(upload)
-		_ = resp.Body.Close()
+		uploadFileId, err := e.uploadUseCase.UploadFile(upload)
 		if err != nil {
 			log.Errorf("Failed to upload file: %v", err)
 			return nil, nil, err
@@ -565,7 +586,6 @@ func (e *EventListener) getUserAvatar(avatarUrl string) (*entity.Upload, error) 
 		log.Errorf("Failed to get file content: %v", err)
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
 
 	// Читаем содержимое в буфер
 	body, err := io.ReadAll(resp.Body)
@@ -581,7 +601,7 @@ func (e *EventListener) getUserAvatar(avatarUrl string) (*entity.Upload, error) 
 		FilePath: fmt.Sprintf("vk/%s.%s", uuid.New().String(), extension),
 		FileType: "photo",
 	}
-	uploadFileId, err := e.uploadRepo.UploadFile(upload)
+	uploadFileId, err := e.uploadUseCase.UploadFile(upload)
 	if err != nil {
 		log.Errorf("Failed to upload file: %v", err)
 		return nil, err
@@ -590,4 +610,10 @@ func (e *EventListener) getUserAvatar(avatarUrl string) (*entity.Upload, error) 
 	return upload, nil
 }
 
-var vkVideoBaseURL = "https://vk.com/video%d_%d"
+// saveLastEventTS сохраняет timestamp последнего обработанного события для команды
+func (e *EventListener) saveLastEventTS(teamID int, ts string) {
+	err := e.vkontakteListenerRepo.SetLastEventTS(teamID, ts)
+	if err != nil {
+		log.Errorf("Failed to save last event timestamp %s for team %d: %v", ts, teamID, err)
+	}
+}

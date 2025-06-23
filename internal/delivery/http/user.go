@@ -2,13 +2,15 @@ package http
 
 import (
 	"errors"
-	"github.com/labstack/echo/v4"
 	"net/http"
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
+	"strconv"
 	"time"
+
+	"github.com/labstack/echo/v4"
 )
 
 type User struct {
@@ -296,23 +298,26 @@ func (u *User) UpdateProfile(c echo.Context) error {
 }
 
 func (u *User) GetProfile(c echo.Context) error {
-	userID, err := u.authManager.CheckAuthFromContext(c)
-	switch {
-	case errors.Is(err, utils.ErrUnauthorized):
-		return c.JSON(http.StatusUnauthorized, echo.Map{
-			"error": "Пользователь не авторизован",
+	// Получаем user_id из query-параметра
+	userIDParam := c.QueryParam("user_id")
+	if userIDParam == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Параметр user_id обязателен",
 		})
-	case err != nil:
-		c.Logger().Errorf("Ошибка при проверке авторизации пользов��теля: %v", err)
-		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": "Произошла непредвиденная ошибка",
+	}
+
+	// Преобразуем строку в int
+	userID, err := strconv.Atoi(userIDParam)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Параметр user_id должен быть числом",
 		})
 	}
 
 	profile, err := u.userUseCase.GetUser(userID)
 	if err != nil {
 		if errors.Is(err, repo.ErrUserNotFound) {
-			return c.JSON(http.StatusUnauthorized, echo.Map{
+			return c.JSON(http.StatusNotFound, echo.Map{
 				"error": "Пользователь не найден",
 			})
 		}

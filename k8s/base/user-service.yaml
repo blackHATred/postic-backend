@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: postic
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+        - name: user-service
+          image: ghcr.io/blackhatred/postic-user-service:latest
+          env:
+            - name: DB_CONNECT_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: cockroachdb-secret
+                  key: db-connect-dsn
+            - name: USER_SERVICE_GRPC_PORT
+              value: "50051"
+            - name: VK_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: vk-oauth-secret
+                  key: client-id
+            - name: VK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: vk-oauth-secret
+                  key: client-secret
+            - name: VK_REDIRECT_URL
+              value: "https://postic.io/api/user/vk/callback"
+          ports:
+            - containerPort: 50051
+              name: grpc
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: postic
+spec:
+  ports:
+    - port: 50051
+      name: grpc
+      targetPort: 50051
+  selector:
+    app: user-service
+  type: ClusterIP

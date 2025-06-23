@@ -3,14 +3,11 @@ package main
 import (
 	"context"
 	"errors"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/joho/godotenv"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
-	"github.com/labstack/gommon/log"
 	"net/http"
 	"os"
 	"os/signal"
+	uploadgrpc "postic-backend/internal/delivery/grpc/upload-service"
+	grpc_client "postic-backend/internal/delivery/grpc/user-service"
 	delivery "postic-backend/internal/delivery/http"
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/repo/cockroach"
@@ -19,36 +16,61 @@ import (
 	"postic-backend/internal/usecase/service/telegram"
 	"postic-backend/internal/usecase/service/vkontakte"
 	"postic-backend/pkg/connector"
+	"postic-backend/pkg/goosehelper"
 	"strings"
 	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/joho/godotenv"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/gommon/log"
 )
+
+func init() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Info(".env файл не обнаружен")
+	}
+
+	// Выполнить миграции при старте
+	dbConnectDSN := os.Getenv("DB_CONNECT_DSN")
+	DBConn, err := connector.GetCockroachConnector(dbConnectDSN)
+	if err != nil {
+		log.Fatalf("Ошибка при подключении к базе данных: %v", err)
+	}
+	// Получаем *sql.DB из *sqlx.DB
+	sqldb := DBConn.DB
+	migrationsDir := "./cockroachdb/migrations"
+	goosehelper.MigrateUp(sqldb, migrationsDir)
+	if err := DBConn.Close(); err != nil {
+		log.Fatalf("Ошибка при закрытии соединения с базой данных: %v", err)
+	}
+}
 
 func main() {
 	sysCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer stop()
 
-	err := godotenv.Load()
-	if err != nil {
-		log.Info(".env файл не обнаружен")
-	}
 	telegramBotToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	jwtSecret := os.Getenv("JWT_SECRET")
 	dbConnectDSN := os.Getenv("DB_CONNECT_DSN")
-	minioEndpoint := os.Getenv("MINIO_ENDPOINT")
-	minioAccessKey := os.Getenv("MINIO_ACCESS_KEY")
-	minioSecretKey := os.Getenv("MINIO_SECRET_KEY")
-	minioUseSSL := false
 	corsOrigin := os.Getenv("CORS_ORIGIN")
 	summarizeURL := os.Getenv("SUMMARIZE_URL")
 	replyIdeasURL := os.Getenv("REPLY_IDEAS_URL")
-	vkClientID := os.Getenv("VK_CLIENT_ID")
-	vkClientSecret := os.Getenv("VK_CLIENT_SECRET")
-	vkRedirectURL := os.Getenv("VK_REDIRECT_URL")
+	generatePostURL := os.Getenv("GENERATE_POST_URL")
+	fixPostTextURL := os.Getenv("FIX_POST_TEXT_URL")
 	vkSuccessURL := os.Getenv("VK_FRONTEND_SUCCESS_REDIRECT_URL")
 	vkErrorURL := os.Getenv("VK_FRONTEND_ERROR_REDIRECT_URL")
 	kafkaBrokers := os.Getenv("KAFKA_BROKERS")
-
-	vkAuth := utils.NewVKOAuth(vkClientID, vkClientSecret, vkRedirectURL)
+	userServiceAddr := os.Getenv("USER_SERVICE_ADDR")
+	if userServiceAddr == "" {
+		userServiceAddr = "localhost:50051" // Адрес по умолчанию
+	}
+	uploadServiceAddr := os.Getenv("UPLOAD_SERVICE_ADDR")
+	if uploadServiceAddr == "" {
+		uploadServiceAddr = "localhost:50052"
+	}
 
 	// cockroach
 	DBConn, err := connector.GetCockroachConnector(dbConnectDSN) // примерный вид dsn: "user=root dbname=defaultdb sslmode=disable"
@@ -62,11 +84,14 @@ func main() {
 		}
 	}()
 
-	// minio
-	minioClient, err := connector.GetMinioConnector(minioEndpoint, minioAccessKey, minioSecretKey, minioUseSSL)
+	// запускаем gRPC upload client и usecase
+	uploadClient, err := uploadgrpc.NewClient(uploadServiceAddr)
 	if err != nil {
-		log.Fatalf("Ошибка при подключении к MinIO: %v", err)
+		log.Fatalf("Ошибка при создании gRPC клиента для upload service: %v", err)
 	}
+	defer uploadClient.Close()
+
+	uploadUseCase := service.NewUpload(uploadClient)
 
 	// запускаем сервисы репозиториев (подключение к базе данных)
 	eventRepo, err := kafka.NewCommentEventKafkaRepository(strings.Split(kafkaBrokers, ","))
@@ -76,14 +101,8 @@ func main() {
 	userRepo := cockroach.NewUser(DBConn)
 	teamRepo := cockroach.NewTeam(DBConn)
 	postRepo := cockroach.NewPost(DBConn)
-	uploadRepo, err := cockroach.NewUpload(DBConn, minioClient)
-	if err != nil {
-		log.Fatalf("Ошибка при создании репозитория Upload: %v", err)
-	}
 	commentRepo := cockroach.NewComment(DBConn)
 	analyticsRepo := cockroach.NewAnalytics(DBConn)
-	telegramListenerRepo := cockroach.NewTelegramListener(DBConn)
-	vkontakteListenerRepo := cockroach.NewVkontakteListener(DBConn)
 
 	// запускаем сервисы usecase (бизнес-логика)
 	// -- telegram --
@@ -91,28 +110,36 @@ func main() {
 	if err != nil {
 		log.Fatalf("Ошибка при создании Telegram бота: %v", err)
 	}
-	telegramPostPlatformUseCase := telegram.NewTelegramPost(tgBot, postRepo, teamRepo, uploadRepo)
-	telegramCommentUseCase := telegram.NewTelegramComment(tgBot, commentRepo, teamRepo, uploadRepo, eventRepo)
-	telegramEventListener, err := telegram.NewTelegramEventListener(telegramBotToken, false, telegramListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, analyticsRepo, eventRepo)
-	if err != nil {
-		log.Fatalf("Ошибка при создании слушателя событий Post: %v", err)
-	}
+	telegramPostPlatformUseCase := telegram.NewTelegramPost(tgBot, postRepo, teamRepo, uploadUseCase)
+	telegramCommentUseCase := telegram.NewTelegramComment(tgBot, commentRepo, teamRepo, uploadUseCase, eventRepo)
 	telegramAnalytics := telegram.NewTelegramAnalytics(teamRepo, postRepo, analyticsRepo)
 	// -- vk --
-	vkPostPlatformUseCase := vkontakte.NewPost(postRepo, teamRepo, uploadRepo)
-	vkCommentUseCase := vkontakte.NewVkontakteComment(commentRepo, teamRepo, uploadRepo, eventRepo)
-	vkEventListener := vkontakte.NewVKEventListener(vkontakteListenerRepo, teamRepo, postRepo, uploadRepo, commentRepo, eventRepo)
+	vkPostPlatformUseCase := vkontakte.NewPost(postRepo, teamRepo, uploadUseCase)
+	vkCommentUseCase := vkontakte.NewVkontakteComment(commentRepo, teamRepo, uploadUseCase, eventRepo)
 	vkAnalytics := vkontakte.NewVkontakteAnalytics(teamRepo, postRepo, analyticsRepo)
-
 	postUseCase := service.NewPostUnion(
 		postRepo,
 		teamRepo,
-		uploadRepo,
+		uploadUseCase,
+		analyticsRepo,
 		telegramPostPlatformUseCase,
 		vkPostPlatformUseCase,
+		generatePostURL,
+		fixPostTextURL,
 	)
-	userUseCase := service.NewUser(userRepo, vkAuth)
-	uploadUseCase := service.NewUpload(uploadRepo)
+	// Используем gRPC клиент для user service вместо прямого создания usecase
+	userUseCase, err := grpc_client.NewUserServiceClient(userServiceAddr)
+	if err != nil {
+		log.Fatalf("Ошибка при создании gRPC клиента для user service: %v", err)
+	}
+	defer func() {
+		if closer, ok := userUseCase.(interface{ Close() error }); ok {
+			if err := closer.Close(); err != nil {
+				log.Errorf("Ошибка при закрытии gRPC соединения: %v", err)
+			}
+		}
+	}()
+
 	teamUseCase := service.NewTeam(teamRepo)
 	commentUseCase := service.NewComment(
 		commentRepo,
@@ -180,8 +207,40 @@ func main() {
 			return next(ctx)
 		}
 	})
-
 	// Endpoints
+	// Health check endpoints
+	echoServer.GET("/health", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{
+			"status":    "healthy",
+			"service":   "gateway",
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		})
+	})
+	echoServer.GET("/ready", func(c echo.Context) error {
+		// Проверяем готовность критических компонентов
+		checks := make(map[string]interface{})
+
+		// Проверка базы данных
+		if err := DBConn.Ping(); err != nil {
+			checks["database"] = map[string]interface{}{
+				"status": "unhealthy",
+				"error":  err.Error(),
+			}
+			return c.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+				"status": "not ready",
+				"checks": checks,
+			})
+		}
+		checks["database"] = map[string]string{"status": "healthy"}
+
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"status":    "ready",
+			"service":   "gateway",
+			"checks":    checks,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		})
+	})
+
 	api := echoServer.Group("/api")
 	// posts
 	posts := api.Group("/posts")
@@ -207,11 +266,6 @@ func main() {
 			server.Logger.Errorf("Сервер завершил свою работу по причине: %v\n", err)
 		}
 	}(echoServer)
-	// Запуск слушателя событий Post. Если приходит сигнал завершения, то слушатель останавливается.
-	go telegramEventListener.StartListener()
-	defer telegramEventListener.StopListener()
-	go vkEventListener.StartListener()
-	defer vkEventListener.StopListener()
 
 	<-sysCtx.Done()
 	ctx, cancel := context.WithTimeout(

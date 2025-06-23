@@ -2,13 +2,15 @@ package http
 
 import (
 	"errors"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/gommon/log"
 	"net/http"
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/usecase"
+	"postic-backend/pkg/sse"
 	"time"
+
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/gommon/log"
 )
 
 type Post struct {
@@ -31,6 +33,8 @@ func (p *Post) Configure(server *echo.Group) {
 	server.GET("/get", p.GetPost)
 	server.GET("/list", p.GetPosts)
 	server.GET("/status", p.GetPostStatus)
+	server.POST("/generate", p.GeneratePost)
+	server.POST("/fix", p.FixPostText)
 }
 
 func (p *Post) AddPost(c echo.Context) error {
@@ -272,5 +276,126 @@ func (p *Post) GetPostStatus(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, echo.Map{
 		"status": status,
+	})
+}
+
+// GeneratePost генерирует пост с помощью AI через SSE
+func (p *Post) GeneratePost(c echo.Context) error {
+	userID, err := p.authManager.CheckAuthFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	}
+
+	request := &entity.GeneratePostRequest{}
+	err = utils.ReadJSON(c, request)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат запроса",
+		})
+	}
+	request.UserID = userID
+
+	// получаем канал SSE
+	sseChannel, err := p.postUseCase.GeneratePost(request)
+	switch {
+	case errors.Is(err, usecase.ErrUserForbidden):
+		return c.JSON(http.StatusForbidden, echo.Map{
+			"error": "У вас нет прав на генерацию постов",
+		})
+	case err != nil:
+		c.Logger().Error(err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Ошибка сервера",
+		})
+	}
+
+	w := c.Response()
+	// настраиваем SSE заголовки
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	//c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+	//c.Response().Header().Set("Access-Control-Allow-Headers", "*")
+	w.WriteHeader(http.StatusOK)
+	w.Flush()
+
+	pingTicker := time.NewTicker(20 * time.Second)
+	defer pingTicker.Stop()
+
+	// через две минуты автоматически закрываем соединение
+	closeAfter := time.After(2 * time.Minute)
+
+	for {
+		select {
+		case <-c.Request().Context().Done():
+			return nil
+		case <-closeAfter:
+			log.Info("Закрытие SSE соединения из-за таймаута")
+			return nil
+		case <-pingTicker.C:
+			ping := sse.Event{
+				Event: []byte("ping"),
+				Data:  []byte(""),
+			}
+			if err := ping.MarshalTo(w); err != nil {
+				log.Errorf("Ошибка маршалинга пинга: %v", err)
+				return nil
+			}
+			w.Flush()
+		case data, ok := <-sseChannel:
+			if !ok {
+				return nil
+			}
+			event := sse.Event{
+				Event: []byte("message"),
+				Data:  []byte(data),
+			}
+			if err := event.MarshalTo(w); err != nil {
+				log.Errorf("error writing SSE event: %v", err)
+				return c.JSON(http.StatusInternalServerError, echo.Map{
+					"error": "Ошибка сервера",
+				})
+			}
+			w.Flush()
+		}
+	}
+}
+
+// FixPostText исправляет ошибки в тексте поста
+func (p *Post) FixPostText(c echo.Context) error {
+	userID, err := p.authManager.CheckAuthFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, echo.Map{
+			"error": "Пользователь не авторизован",
+		})
+	}
+
+	request := &entity.FixPostTextRequest{}
+	err = utils.ReadJSON(c, request)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Неверный формат запроса",
+		})
+	}
+	request.UserID = userID
+
+	response, err := p.postUseCase.FixPostText(request)
+	switch {
+	case errors.Is(err, usecase.ErrUserForbidden):
+		return c.JSON(http.StatusForbidden, echo.Map{
+			"error": "У вас нет прав на исправление текста постов",
+		})
+	case err != nil:
+		c.Logger().Error(err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Ошибка сервера",
+		})
+	}
+
+	return c.JSON(http.StatusOK, echo.Map{
+		"status": "ok",
+		"text":   response.Text,
 	})
 }

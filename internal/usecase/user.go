@@ -23,9 +23,18 @@ type User interface {
 }
 
 var (
+	// Ошибки валидации
 	ErrEmailAlreadyExists = errors.New("email already exists")
 	ErrInvalidEmail       = errors.New("invalid email format")
 	ErrPasswordTooShort   = errors.New("password too short, minimum length is 8 characters")
 	ErrPasswordTooLong    = errors.New("password too long, maximum length is 64 characters")
 	ErrVKAuthFailed       = errors.New("vk authorization failed")
+
+	// Ошибки аутентификации и авторизации
+	ErrUserNotExists      = errors.New("user not found")
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrUnauthorized       = errors.New("unauthorized")
+
+	// Системные ошибки
+	ErrUserInternal = errors.New("internal server error")
 )

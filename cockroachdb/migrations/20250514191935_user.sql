@@ -1,3 +1,4 @@
+-- +goose Up
 -- обновление таблицы user: добавляем хэш пароля для bcrypt,
 -- имя, email
 ALTER TABLE "user"

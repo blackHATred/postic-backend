@@ -1,33 +1,34 @@
 package telegram
 
 import (
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/labstack/gommon/log"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
 	"postic-backend/pkg/retry"
 	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/labstack/gommon/log"
 )
 
 type Post struct {
-	bot        *tgbotapi.BotAPI
-	postRepo   repo.Post
-	teamRepo   repo.Team
-	uploadRepo repo.Upload
+	bot           *tgbotapi.BotAPI
+	postRepo      repo.Post
+	teamRepo      repo.Team
+	uploadUseCase usecase.Upload
 }
 
 func NewTelegramPost(
 	bot *tgbotapi.BotAPI,
 	postRepo repo.Post,
 	teamRepo repo.Team,
-	uploadRepo repo.Upload,
+	uploadUseCase usecase.Upload,
 ) usecase.PostPlatform {
 	return &Post{
-		bot:        bot,
-		postRepo:   postRepo,
-		teamRepo:   teamRepo,
-		uploadRepo: uploadRepo,
+		bot:           bot,
+		postRepo:      postRepo,
+		teamRepo:      teamRepo,
+		uploadUseCase: uploadUseCase,
 	}
 }
 
@@ -36,7 +37,7 @@ func (p *Post) createPostAction(request *entity.PostUnion) (int, error) {
 	err := retry.Retry(func() error {
 		var err error
 		postActionId, err = p.postRepo.AddPostAction(&entity.PostAction{
-			PostUnionID: request.ID,
+			PostUnionID: &request.ID,
 			Operation:   "publish",
 			Platform:    "tg",
 			Status:      "pending",
@@ -134,7 +135,7 @@ func (p *Post) handleNoAttachments(request *entity.PostUnion, actionId int, tgCh
 
 func (p *Post) handleSingleAttachment(request *entity.PostUnion, actionId int, tgChannel *entity.TGChannel) {
 	attachment := request.Attachments[0]
-	upload, err := p.uploadRepo.GetUpload(attachment.ID)
+	upload, err := p.uploadUseCase.GetUpload(attachment.ID)
 	if err != nil {
 		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
@@ -151,7 +152,7 @@ func (p *Post) handleSingleAttachment(request *entity.PostUnion, actionId int, t
 func (p *Post) handleMultipleAttachments(request *entity.PostUnion, actionId int, tgChannel *entity.TGChannel) {
 	var mediaGroup []any
 	for i, attachment := range request.Attachments {
-		upload, err := p.uploadRepo.GetUpload(attachment.ID)
+		upload, err := p.uploadUseCase.GetUpload(attachment.ID)
 		if err != nil {
 			p.updatePostActionStatus(actionId, "error", err.Error())
 			return
@@ -294,7 +295,7 @@ func (p *Post) EditPost(request *entity.EditPostRequest) (int, error) {
 	err := retry.Retry(func() error {
 		var err error
 		postActionId, err = p.postRepo.AddPostAction(&entity.PostAction{
-			PostUnionID: request.PostUnionID,
+			PostUnionID: &request.PostUnionID,
 			Operation:   "edit",
 			Platform:    "tg",
 			Status:      "pending",
@@ -365,7 +366,7 @@ func (p *Post) DeletePost(request *entity.DeletePostRequest) (int, error) {
 	err := retry.Retry(func() error {
 		var err error
 		postActionId, err = p.postRepo.AddPostAction(&entity.PostAction{
-			PostUnionID: request.PostUnionID,
+			PostUnionID: &request.PostUnionID,
 			Operation:   "delete",
 			Platform:    "tg",
 			Status:      "pending",
@@ -409,7 +410,7 @@ func (p *Post) deletePostAsync(post *entity.PostUnion, actionId int, tgChannel *
 		p.updatePostActionStatus(actionId, "error", err.Error())
 		return
 	}
-	if postPlatform.TgPostPlatformGroup != nil && len(postPlatform.TgPostPlatformGroup) > 0 {
+	if len(postPlatform.TgPostPlatformGroup) > 0 {
 		// сначала удаляем все связанные в медиагруппе сообщения
 		for _, tgPost := range postPlatform.TgPostPlatformGroup {
 			msg := tgbotapi.NewDeleteMessage(int64(tgChannel.ChannelID), tgPost.TgPostID)

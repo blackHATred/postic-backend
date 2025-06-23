@@ -3,6 +3,7 @@ package entity
 import (
 	"errors"
 	"time"
+	"unicode/utf8"
 )
 
 type GetPostRequest struct {
@@ -37,22 +38,22 @@ func (r *AddPostRequest) IsValid() error {
 		return errors.New("platforms are empty")
 	}
 	for _, platform := range r.Platforms {
-		if platform == "tg" && len(r.Attachments) == 0 && len(r.Text) > 4096 {
+		if platform == "tg" && len(r.Attachments) == 0 && utf8.RuneCountInString(r.Text) > 4096 {
 			return errors.New("text is too long for telegram")
 		}
-		if platform == "tg" && len(r.Attachments) > 0 && len(r.Text) > 1024 {
+		if platform == "tg" && len(r.Attachments) > 0 && utf8.RuneCountInString(r.Text) > 1024 {
 			return errors.New("text is too long for telegram with attachments")
 		}
-		if platform == "vk" && len(r.Text) > 16384 {
+		if platform == "vk" && utf8.RuneCountInString(r.Text) > 16384 {
 			return errors.New("text is too long for vkontakte")
 		}
-		if platform == "fb" && len(r.Text) > 63206 {
+		if platform == "fb" && utf8.RuneCountInString(r.Text) > 63206 {
 			return errors.New("text is too long for facebook")
 		}
-		if platform == "ok" && len(r.Text) > 32000 {
+		if platform == "ok" && utf8.RuneCountInString(r.Text) > 32000 {
 			return errors.New("text is too long for odnoklassniki")
 		}
-		if platform == "ig" && len(r.Text) > 2200 {
+		if platform == "ig" && utf8.RuneCountInString(r.Text) > 2200 {
 			return errors.New("text is too long for instagram")
 		}
 	}
@@ -64,6 +65,27 @@ type EditPostRequest struct {
 	TeamID      int    `json:"team_id"`
 	PostUnionID int    `json:"post_union_id"`
 	Text        string `json:"text"`
+}
+
+func (r *EditPostRequest) IsValid(platforms []string) error {
+	for _, platform := range platforms {
+		if platform == "tg" && utf8.RuneCountInString(r.Text) > 4096 {
+			return errors.New("text is too long for telegram")
+		}
+		if platform == "vk" && utf8.RuneCountInString(r.Text) > 16384 {
+			return errors.New("text is too long for vkontakte")
+		}
+		if platform == "fb" && utf8.RuneCountInString(r.Text) > 63206 {
+			return errors.New("text is too long for facebook")
+		}
+		if platform == "ok" && utf8.RuneCountInString(r.Text) > 32000 {
+			return errors.New("text is too long for odnoklassniki")
+		}
+		if platform == "ig" && utf8.RuneCountInString(r.Text) > 2200 {
+			return errors.New("text is too long for instagram")
+		}
+	}
+	return nil
 }
 
 type DeletePostRequest struct {
@@ -93,7 +115,7 @@ type DoActionRequest struct {
 
 type PostAction struct {
 	ID          int       `db:"id"`
-	PostUnionID int       `db:"post_union_id"`
+	PostUnionID *int      `db:"post_union_id"`
 	Operation   string    `db:"op"`
 	Platform    string    `db:"platform"`
 	Status      string    `db:"status"`
@@ -141,4 +163,23 @@ type ScheduledPost struct {
 	ScheduledAt time.Time `json:"scheduled_at" db:"scheduled_at"`
 	Status      string    `json:"status" db:"status"`
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+}
+
+// GeneratePostRequest запрос для генерации поста с помощью AI
+type GeneratePostRequest struct {
+	UserID int    `json:"-"`
+	TeamID int    `json:"team_id"`
+	Query  string `json:"query"`
+}
+
+// FixPostTextRequest запрос для исправления текста поста
+type FixPostTextRequest struct {
+	UserID int    `json:"-"`
+	TeamID int    `json:"team_id"`
+	Text   string `json:"text"`
+}
+
+// FixPostTextResponse ответ с исправленным текстом
+type FixPostTextResponse struct {
+	Text string `json:"text"`
 }

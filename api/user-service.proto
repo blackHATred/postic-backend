@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package userservice;
+option go_package = "./;userservice";
+
+// Сервис для управления пользователями
+service UserService {
+  // Register регистрирует нового пользователя и возвращает его идентификатор
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  
+  // Login авторизует пользователя и возвращает его идентификатор
+  rpc Login(LoginRequest) returns (LoginResponse);
+  
+  // GetUser возвращает пользователя по его идентификатору
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  
+  // UpdatePassword обновляет пароль пользователя
+  rpc UpdatePassword(UpdatePasswordRequest) returns (UpdatePasswordResponse);
+  
+  // UpdateProfile обновляет профиль пользователя
+  rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
+  
+  // GetVKAuthURL возвращает URL для авторизации через VK
+  rpc GetVKAuthURL(GetVKAuthURLRequest) returns (GetVKAuthURLResponse);
+  
+  // HandleVKCallback обрабатывает ответ от VK после авторизации
+  rpc HandleVKCallback(HandleVKCallbackRequest) returns (HandleVKCallbackResponse);
+}
+
+// Сообщения для регистрации
+message RegisterRequest {
+  string nickname = 1;
+  string email = 2;
+  string password = 3;
+}
+
+message RegisterResponse {
+  int32 user_id = 1;
+  string error = 2;
+}
+
+// Сообщения для логина
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  int32 user_id = 1;
+  string error = 2;
+}
+
+// Сообщения для получения пользователя
+message GetUserRequest {
+  int32 user_id = 1;
+}
+
+message GetUserResponse {
+  int32 id = 1;
+  string nickname = 2;
+  string email = 3;
+  string created_at = 4;
+  string updated_at = 5;
+  string error = 6;
+}
+
+// Сообщения для обновления пароля
+message UpdatePasswordRequest {
+  int32 user_id = 1;
+  string old_password = 2;
+  string new_password = 3;
+}
+
+message UpdatePasswordResponse {
+  string error = 1;
+}
+
+// Сообщения для обновления профиля
+message UpdateProfileRequest {
+  int32 user_id = 1;
+  string nickname = 2;
+  string email = 3;
+}
+
+message UpdateProfileResponse {
+  string error = 1;
+}
+
+// Сообщения для VK авторизации
+message GetVKAuthURLRequest {
+}
+
+message GetVKAuthURLResponse {
+  string auth_url = 1;
+  string error = 2;
+}
+
+message HandleVKCallbackRequest {
+  string code = 1;
+}
+
+message HandleVKCallbackResponse {
+  int32 user_id = 1;
+  string error = 2;
+}

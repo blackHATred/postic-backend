@@ -14,4 +14,6 @@ type Analytics interface {
 	GetPostUnionStats(request *entity.GetPostUnionStatsRequest) ([]*entity.PostPlatformStats, error)
 	// GetUsersKPI возвращает KPI по постам для нескольких пользователей
 	GetUsersKPI(request *entity.GetUsersKPIRequest) (*entity.UsersKPIResponse, error)
+	// ProcessStatsUpdateTasks обрабатывает задачи обновления статистики
+	ProcessStatsUpdateTasks(workerID string) error
 }

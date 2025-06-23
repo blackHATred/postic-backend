@@ -2,10 +2,12 @@ package vkontakte
 
 import (
 	"fmt"
-	"github.com/SevereCloud/vksdk/v3/api"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
+	"time"
+
+	"github.com/SevereCloud/vksdk/v3/api"
 )
 
 type Analytics struct {
@@ -61,14 +63,14 @@ func (a *Analytics) UpdateStat(postUnionID int) error {
 		TeamID:      post.TeamID,
 		PostUnionID: postUnionID,
 		Platform:    "vk",
+		RecordedAt:  time.Now(),
 		Views:       response.Items[0].Views.Count,
-		Comments:    response.Items[0].Comments.Count,
 		Reactions:   response.Items[0].Likes.Count,
 	}
 
-	err = a.analyticsRepo.UpdateLastPlatformStats(stats, "vk")
+	err = a.analyticsRepo.SavePostPlatformStats(stats)
 	if err != nil {
-		return fmt.Errorf("failed to update post platform stats: %w", err)
+		return fmt.Errorf("failed to save post platform stats: %w", err)
 	}
 
 	return nil

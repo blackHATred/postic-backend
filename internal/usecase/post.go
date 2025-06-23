@@ -30,6 +30,10 @@ type PostUnion interface {
 	GetPostStatus(request *entity.PostStatusRequest) ([]*entity.PostActionResponse, error)
 	// DoAction добавляет операцию к PostUnion в очередь. Возвращает айди созданного action
 	DoAction(request *entity.DoActionRequest) (int, error)
+	// GeneratePost генерирует пост с помощью AI через SSE
+	GeneratePost(request *entity.GeneratePostRequest) (<-chan string, error)
+	// FixPostText исправляет ошибки в тексте поста
+	FixPostText(request *entity.FixPostTextRequest) (*entity.FixPostTextResponse, error)
 }
 
 var (

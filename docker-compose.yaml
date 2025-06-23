@@ -55,6 +55,21 @@ services:
       - "9092:9092"
       - "9093:9093"
 
+  # Stats Worker - микросервис для обновления статистики
+  stats-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.stats-worker
+    container_name: stats-worker
+    depends_on:
+      - cockroach
+      - flyway
+    environment:
+      - DB_CONNECT_DSN=postgresql://root@cockroach:26257/defaultdb?sslmode=disable
+      - STATS_WORKER_ID=stats-worker-docker
+      - STATS_WORKER_INTERVAL=1m
+    restart: unless-stopped
+
 volumes:
   minio-data:
   cockroach-data:

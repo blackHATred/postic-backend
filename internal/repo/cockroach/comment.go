@@ -4,11 +4,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	sq "github.com/Masterminds/squirrel"
-	"github.com/jmoiron/sqlx"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"time"
+
+	sq "github.com/Masterminds/squirrel"
+	"github.com/jmoiron/sqlx"
 )
 
 type Comment struct {

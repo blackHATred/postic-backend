@@ -2,12 +2,14 @@ package cockroach
 
 import (
 	"context"
-	"github.com/jmoiron/sqlx"
-	"github.com/minio/minio-go/v7"
 	"io"
 	"net/http"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
+
+	sq "github.com/Masterminds/squirrel"
+	"github.com/jmoiron/sqlx"
+	"github.com/minio/minio-go/v7"
 )
 
 type Upload struct {
@@ -17,7 +19,7 @@ type Upload struct {
 
 func NewUpload(db *sqlx.DB, minioClient *minio.Client) (repo.Upload, error) {
 	// Создаем бакет для user uploads, предварительно проверив, что его нет
-	ctx := context.TODO()
+	ctx := context.Background()
 	exists, err := minioClient.BucketExists(ctx, "mediafiles")
 	if err != nil {
 		return nil, err
@@ -38,17 +40,17 @@ func NewUpload(db *sqlx.DB, minioClient *minio.Client) (repo.Upload, error) {
 }
 
 func (u *Upload) GetUpload(id int) (*entity.Upload, error) {
-	// Получаем upload из БД, потом загружаем его из S3
 	upload := &entity.Upload{}
-	query := `SELECT * FROM mediafile WHERE id = $1`
-	err := u.db.Get(upload, query, id)
+	query, args, err := sq.Select("*").From("mediafile").Where(sq.Eq{"id": id}).PlaceholderFormat(sq.Dollar).ToSql()
+	if err != nil {
+		return nil, err
+	}
+	err = u.db.Get(upload, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	ctx := context.TODO()
-	object, err := u.minioClient.GetObject(ctx, "mediafiles", upload.FilePath, minio.GetObjectOptions{
-		Checksum: true,
-	})
+	object, err := u.minioClient.GetObject(ctx, "mediafiles", upload.FilePath, minio.GetObjectOptions{Checksum: true})
 	if err != nil {
 		return nil, err
 	}
@@ -58,8 +60,11 @@ func (u *Upload) GetUpload(id int) (*entity.Upload, error) {
 
 func (u *Upload) GetUploadInfo(id int) (*entity.Upload, error) {
 	upload := &entity.Upload{}
-	query := `SELECT * FROM mediafile WHERE id = $1`
-	err := u.db.Get(upload, query, id)
+	query, args, err := sq.Select("*").From("mediafile").Where(sq.Eq{"id": id}).PlaceholderFormat(sq.Dollar).ToSql()
+	if err != nil {
+		return nil, err
+	}
+	err = u.db.Get(upload, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -67,18 +72,15 @@ func (u *Upload) GetUploadInfo(id int) (*entity.Upload, error) {
 }
 
 func (u *Upload) UploadFile(upload *entity.Upload) (int, error) {
-	// Добавляем файл в S3 хранилище и создаём запись в БД
-	ctx := context.TODO()
+	ctx := context.Background()
 	rawBytes, err := io.ReadAll(upload.RawBytes)
 	if err != nil {
 		return 0, err
 	}
-	// возвратим указатель в начало, чтобы не потерять позицию
-	_, err = upload.RawBytes.Seek(0, 0)
+	_, err = upload.RawBytes.Seek(0, io.SeekStart) // Сбросим указатель на начало, чтобы MinIO мог прочитать файл
 	if err != nil {
 		return 0, err
 	}
-	// так как считали все байты, то нужно создать новый буфер - будем считать это допустимым оверхедом
 	mediaType := http.DetectContentType(rawBytes)
 	_, err = u.minioClient.PutObject(
 		ctx,
@@ -93,17 +95,39 @@ func (u *Upload) UploadFile(upload *entity.Upload) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	var uploadID int
+	builder := sq.Insert("mediafile").Columns("file_path", "file_type")
 	if upload.UserID == nil {
-		// Если загрузка не привязана к пользователю, то просто добавляем в БД
-		query := `INSERT INTO mediafile (file_path, file_type) VALUES ($1, $2) RETURNING id`
-		err = u.db.QueryRow(query, upload.FilePath, upload.FileType).Scan(&uploadID)
+		builder = builder.Values(upload.FilePath, upload.FileType)
 	} else {
-		query := `INSERT INTO mediafile (file_path, file_type, uploaded_by_user_id) VALUES ($1, $2, $3) RETURNING id`
-		err = u.db.QueryRow(query, upload.FilePath, upload.FileType, upload.UserID).Scan(&uploadID)
+		builder = builder.Columns("uploaded_by_user_id").Values(upload.FilePath, upload.FileType, upload.UserID)
 	}
+	builder = builder.Suffix("RETURNING id").PlaceholderFormat(sq.Dollar)
+	query, qargs, err := builder.ToSql()
+	if err != nil {
+		return 0, err
+	}
+	var uploadID int
+	err = u.db.QueryRow(query, qargs...).Scan(&uploadID)
 	if err != nil {
 		return 0, err
 	}
 	return uploadID, nil
+}
+
+func (u *Upload) DeleteUpload(id int) error {
+	upload, err := u.GetUploadInfo(id)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	err = u.minioClient.RemoveObject(ctx, "mediafiles", upload.FilePath, minio.RemoveObjectOptions{})
+	if err != nil {
+		return err
+	}
+	query, args, err := sq.Delete("mediafile").Where(sq.Eq{"id": id}).PlaceholderFormat(sq.Dollar).ToSql()
+	if err != nil {
+		return err
+	}
+	_, err = u.db.Exec(query, args...)
+	return err
 }

@@ -3,37 +3,38 @@ package telegram
 import (
 	"context"
 	"fmt"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/labstack/gommon/log"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
 	"postic-backend/pkg/retry"
 	"slices"
 	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/labstack/gommon/log"
 )
 
 type Comment struct {
-	bot         *tgbotapi.BotAPI
-	commentRepo repo.Comment
-	teamRepo    repo.Team
-	uploadRepo  repo.Upload
-	eventRepo   repo.CommentEventRepository
+	bot           *tgbotapi.BotAPI
+	commentRepo   repo.Comment
+	teamRepo      repo.Team
+	uploadUseCase usecase.Upload
+	eventRepo     repo.CommentEventRepository
 }
 
 func NewTelegramComment(
 	bot *tgbotapi.BotAPI,
 	commentRepo repo.Comment,
 	teamRepo repo.Team,
-	uploadRepo repo.Upload,
+	uploadUseCase usecase.Upload,
 	eventRepo repo.CommentEventRepository,
 ) *Comment {
 	return &Comment{
-		bot:         bot,
-		commentRepo: commentRepo,
-		teamRepo:    teamRepo,
-		uploadRepo:  uploadRepo,
-		eventRepo:   eventRepo,
+		bot:           bot,
+		commentRepo:   commentRepo,
+		teamRepo:      teamRepo,
+		uploadUseCase: uploadUseCase,
+		eventRepo:     eventRepo,
 	}
 }
 
@@ -71,17 +72,17 @@ func (t *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 	// Проверяем наличие вложений
 	if len(request.Attachments) > 0 {
 		// Обрабатываем вложения
-		var mediaGroup []interface{}
+		var mediaGroup []any
 
 		for i, attachmentID := range request.Attachments {
 			// Получаем информацию о файле
-			fileInfo, err := t.uploadRepo.GetUpload(attachmentID)
+			fileInfo, err := t.uploadUseCase.GetUpload(attachmentID)
 			if err != nil {
 				return 0, err
 			}
 
 			// Создаем медиафайл на основе типа
-			var inputMedia interface{}
+			var inputMedia any
 
 			switch fileInfo.FileType {
 			case "photo":
@@ -199,7 +200,7 @@ func (t *Comment) ReplyComment(request *entity.ReplyCommentRequest) (int, error)
 
 	// Добавляем вложения к комментарию
 	for _, attachmentID := range request.Attachments {
-		upload, err := t.uploadRepo.GetUploadInfo(attachmentID)
+		upload, err := t.uploadUseCase.GetUpload(attachmentID)
 		if err != nil {
 			log.Errorf("Failed to get attachment info: %v", err)
 			continue

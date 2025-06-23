@@ -3,31 +3,32 @@ package vkontakte
 import (
 	"errors"
 	"fmt"
-	"github.com/SevereCloud/vksdk/v3/api"
-	"github.com/labstack/gommon/log"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/repo"
 	"postic-backend/internal/usecase"
 	"postic-backend/pkg/retry"
 	"strings"
 	"time"
+
+	"github.com/SevereCloud/vksdk/v3/api"
+	"github.com/labstack/gommon/log"
 )
 
 type Post struct {
-	postRepo   repo.Post
-	teamRepo   repo.Team
-	uploadRepo repo.Upload
+	postRepo      repo.Post
+	teamRepo      repo.Team
+	uploadUseCase usecase.Upload
 }
 
 func NewPost(
 	postRepo repo.Post,
 	teamRepo repo.Team,
-	uploadRepo repo.Upload,
+	uploadUseCase usecase.Upload,
 ) usecase.PostPlatform {
 	return &Post{
-		postRepo:   postRepo,
-		teamRepo:   teamRepo,
-		uploadRepo: uploadRepo,
+		postRepo:      postRepo,
+		teamRepo:      teamRepo,
+		uploadUseCase: uploadUseCase,
 	}
 }
 
@@ -49,7 +50,7 @@ func (p *Post) createPostAction(request *entity.PostUnion) (int, error) {
 	err := retry.Retry(func() error {
 		var err error
 		postActionId, err = p.postRepo.AddPostAction(&entity.PostAction{
-			PostUnionID: request.ID,
+			PostUnionID: &request.ID,
 			Operation:   "publish",
 			Platform:    "vk",
 			Status:      "pending",
@@ -145,7 +146,7 @@ func (p *Post) uploadAttachments(vk *api.VK, groupId int, attachments []*entity.
 	var attachmentStrings []string
 
 	for _, attachment := range attachments {
-		upload, err := p.uploadRepo.GetUpload(attachment.ID)
+		upload, err := p.uploadUseCase.GetUpload(attachment.ID)
 		if err != nil {
 			return "", err
 		}
@@ -204,7 +205,7 @@ func (p *Post) EditPost(request *entity.EditPostRequest) (int, error) {
 	err := retry.Retry(func() error {
 		var err error
 		postActionId, err = p.postRepo.AddPostAction(&entity.PostAction{
-			PostUnionID: request.PostUnionID,
+			PostUnionID: &request.PostUnionID,
 			Operation:   "edit",
 			Platform:    "vk",
 			Status:      "pending",
@@ -278,7 +279,7 @@ func (p *Post) DeletePost(request *entity.DeletePostRequest) (int, error) {
 	err := retry.Retry(func() error {
 		var err error
 		postActionId, err = p.postRepo.AddPostAction(&entity.PostAction{
-			PostUnionID: request.PostUnionID,
+			PostUnionID: &request.PostUnionID,
 			Operation:   "delete",
 			Platform:    "vk",
 			Status:      "pending",

@@ -1,9 +1,10 @@
 package cockroach
 
 import (
-	"github.com/jmoiron/sqlx"
 	"postic-backend/internal/repo"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 )
 
 type VkontakteListener struct {
@@ -46,6 +47,33 @@ SET last_updated_timestamp = NOW()
 WHERE team_id = $1
 `
 	_, err := v.db.Exec(query, teamID)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *VkontakteListener) GetLastEventTS(teamID int) (string, error) {
+	var lastEventTS string
+	query := `
+SELECT last_event_ts
+FROM channel_vk
+WHERE team_id = $1
+`
+	err := v.db.QueryRow(query, teamID).Scan(&lastEventTS)
+	if err != nil {
+		return "0", err
+	}
+	return lastEventTS, nil
+}
+
+func (v *VkontakteListener) SetLastEventTS(teamID int, ts string) error {
+	query := `
+UPDATE channel_vk
+SET last_event_ts = $1
+WHERE team_id = $2
+`
+	_, err := v.db.Exec(query, ts, teamID)
 	if err != nil {
 		return err
 	}
