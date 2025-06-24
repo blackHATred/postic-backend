@@ -3,6 +3,7 @@ package uploadservice
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	uploadpb "postic-backend/internal/delivery/grpc/upload-service/proto"
 	"postic-backend/internal/entity"
@@ -71,26 +72,51 @@ func (s *UploadServiceServer) DownloadChunk(ctx context.Context, req *uploadpb.D
 	if upload.RawBytes == nil {
 		return nil, io.EOF
 	}
+
+	// Получаем размер файла сначала, чтобы не затрагивать seek операции позже
+	size := upload.Size
+	if size == 0 {
+		// Попытаемся получить размер через Seeker
+		if seeker, ok := upload.RawBytes.(io.Seeker); ok {
+			cur, _ := seeker.Seek(0, io.SeekCurrent)
+			sz, err := seeker.Seek(0, io.SeekEnd)
+			if err == nil {
+				size = sz
+				seeker.Seek(cur, io.SeekStart) // возвращаем обратно
+			}
+		}
+	}
+
+	// Проверяем границы запроса
+	if req.Offset < 0 || req.Length < 0 {
+		return nil, errors.New("invalid offset or length")
+	}
+	if req.Offset >= size {
+		return &uploadpb.DownloadChunkResponse{
+			Data:      []byte{},
+			Offset:    req.Offset,
+			TotalSize: size,
+		}, nil
+	}
+
+	// Корректируем длину если она выходит за границы файла
+	maxLength := size - req.Offset
+	if req.Length > maxLength {
+		req.Length = maxLength
+	}
+
 	// Сдвигаем указатель на нужный offset
 	_, err = upload.RawBytes.Seek(req.Offset, io.SeekStart)
 	if err != nil {
 		return nil, err
 	}
+
 	buf := make([]byte, req.Length)
 	n, err := upload.RawBytes.Read(buf)
 	if err != nil && err != io.EOF {
 		return nil, err
 	}
-	// Получаем размер файла (если возможно)
-	size := int64(0)
-	if seeker, ok := upload.RawBytes.(io.Seeker); ok {
-		cur, _ := seeker.Seek(0, io.SeekCurrent)
-		sz, err := seeker.Seek(0, io.SeekEnd)
-		if err == nil {
-			size = sz
-		}
-		seeker.Seek(cur, io.SeekStart)
-	}
+
 	return &uploadpb.DownloadChunkResponse{
 		Data:      buf[:n],
 		Offset:    req.Offset,
@@ -107,16 +133,7 @@ func (s *UploadServiceServer) GetUploadInfo(ctx context.Context, req *uploadpb.G
 		Id:       int64(upload.ID),
 		FilePath: upload.FilePath,
 		FileType: upload.FileType,
-	}
-	if upload.RawBytes != nil {
-		if seeker, ok := upload.RawBytes.(io.Seeker); ok {
-			size, err := seeker.Seek(0, io.SeekEnd)
-			if err == nil {
-				resp.Size = size
-			}
-			// Сбрасываем указатель на начало
-			seeker.Seek(0, io.SeekStart)
-		}
+		Size:     upload.Size,
 	}
 	if upload.UserID != nil {
 		resp.UserId = int32(*upload.UserID)

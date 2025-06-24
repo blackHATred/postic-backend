@@ -68,6 +68,14 @@ func (u *Upload) GetUploadInfo(id int) (*entity.Upload, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Получаем размер файла из MinIO
+	ctx := context.TODO()
+	stat, err := u.minioClient.StatObject(ctx, "mediafiles", upload.FilePath, minio.StatObjectOptions{})
+	if err == nil {
+		upload.Size = stat.Size
+	} else {
+		upload.Size = 0 // Если не удалось получить размер, ставим 0
+	}
 	return upload, err
 }
 

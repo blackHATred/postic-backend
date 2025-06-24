@@ -110,14 +110,34 @@ func NewRemoteReadSeeker(client *Client, ctx context.Context, fileID int64, size
 }
 
 func (r *RemoteReadSeeker) Read(p []byte) (int, error) {
+	if r.offset >= r.size {
+		return 0, io.EOF
+	}
+
 	if r.buf.Len() == 0 {
+		// Определяем размер чанка для загрузки (минимум 64KB или размер буфера)
+		chunkSize := int64(len(p))
+		if chunkSize < 65536 {
+			chunkSize = 65536
+		}
+
+		// Убеждаемся, что не превысим размер файла
+		remaining := r.size - r.offset
+		if chunkSize > remaining {
+			chunkSize = remaining
+		}
+
 		// Загрузить новый чанк
-		data, err := r.client.DownloadChunk(r.ctx, r.fileID, r.offset, int64(len(p)))
+		data, err := r.client.DownloadChunk(r.ctx, r.fileID, r.offset, chunkSize)
 		if err != nil {
 			return 0, err
 		}
+		if len(data) == 0 {
+			return 0, io.EOF
+		}
 		r.buf = bytes.NewReader(data)
 	}
+
 	n, err := r.buf.Read(p)
 	r.offset += int64(n)
 	return n, err
@@ -136,9 +156,17 @@ func (r *RemoteReadSeeker) Seek(offset int64, whence int) (int64, error) {
 		return 0, errors.New("invalid seek")
 	}
 	if abs < 0 {
-		return 0, errors.New("invalid seek")
+		return 0, errors.New("invalid seek: negative position")
+	}
+	if abs > r.size {
+		abs = r.size
 	}
 	r.offset = abs
 	r.buf = bytes.NewReader(nil) // сбросить буфер
 	return abs, nil
+}
+
+// Size возвращает размер файла
+func (r *RemoteReadSeeker) Size() int64 {
+	return r.size
 }

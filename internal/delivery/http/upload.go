@@ -1,12 +1,15 @@
 package http
 
 import (
-	"github.com/labstack/echo/v4"
+	"fmt"
 	"net/http"
 	"postic-backend/internal/delivery/http/utils"
 	"postic-backend/internal/entity"
 	"postic-backend/internal/usecase"
 	"strconv"
+	"time"
+
+	"github.com/labstack/echo/v4"
 )
 
 type Upload struct {
@@ -102,6 +105,25 @@ func (u *Upload) GetFile(c echo.Context) error {
 
 	// Поддержка HTTP Range-запросов для Seekable-контента
 	c.Response().Header().Set("Accept-Ranges", "bytes")
+
+	// ETag — по id и времени создания
+	etag := fmt.Sprintf("\"%d-%d\"", file.ID, file.CreatedAt.Unix())
+	c.Response().Header().Set("ETag", etag)
+	c.Response().Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	c.Response().Header().Set("Last-Modified", file.CreatedAt.UTC().Format(http.TimeFormat))
+
+	if match := c.Request().Header.Get("If-None-Match"); match == etag {
+		return c.NoContent(http.StatusNotModified)
+	}
+	ifModifiedSince := c.Request().Header.Get("If-Modified-Since")
+	if ifModifiedSince != "" {
+		if t, err := time.Parse(http.TimeFormat, ifModifiedSince); err == nil {
+			if !file.CreatedAt.After(t) {
+				return c.NoContent(http.StatusNotModified)
+			}
+		}
+	}
+
 	// Передаём контент с поддержкой диапазонов
 	http.ServeContent(c.Response(), c.Request(), file.FilePath, file.CreatedAt, file.RawBytes)
 	return nil

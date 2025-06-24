@@ -559,10 +559,6 @@ func (e *EventListener) processVKAttachments(attachments []object.WallCommentAtt
 		}
 		// Определяем MIME-тип
 		mime := mimetype.Detect(data)
-		if err != nil {
-			log.Errorf("Failed to detect MIME type: %v", err)
-			return nil, nil, err
-		}
 		extension := strings.TrimPrefix(mime.Extension(), ".")
 		// Сохраняем в S3
 		upload := &entity.Upload{

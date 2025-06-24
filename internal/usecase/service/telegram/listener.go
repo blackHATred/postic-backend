@@ -699,6 +699,10 @@ func (t *EventListener) handleNewComment(ctx context.Context, update *models.Upd
 		Text:              update.Message.Text,
 		CreatedAt:         time.Unix(int64(update.Message.Date), 0),
 	}
+	// Если текст пустой, но есть Caption (например, фото/видео/документ с подписью) — используем Caption
+	if newComment.Text == "" && update.Message.Caption != "" {
+		newComment.Text = update.Message.Caption
+	}
 
 	// Устанавливаем связи с постом или родительским комментарием
 	t.setCommentRelations(newComment, post, replyToComment)

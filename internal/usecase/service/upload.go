@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/labstack/gommon/log"
 
 	uploadgrpc "postic-backend/internal/delivery/grpc/upload-service"
 	"postic-backend/internal/entity"
@@ -28,6 +29,7 @@ func NewUpload(uploadClient *uploadgrpc.Client) usecase.Upload {
 }
 
 func (u *Upload) UploadFile(upload *entity.Upload) (int, error) {
+	log.Infof("upload file %s, type %s, userID %d", upload.FilePath, upload.FileType, derefInt(upload.UserID))
 	// Проверка типа файла по расширению
 	fileExt := strings.ToLower(upload.FilePath[strings.LastIndex(upload.FilePath, ".")+1:])
 
@@ -41,8 +43,12 @@ func (u *Upload) UploadFile(upload *entity.Upload) (int, error) {
 		if fileExt != "mp4" {
 			return 0, errors.New("неподдерживаемое расширение видео: допустимо только mp4")
 		}
+	case "sticker":
+		if fileExt != "png" && fileExt != "webp" && fileExt != "webm" && fileExt != "jpg" && fileExt != "jpeg" && fileExt != "tgs" && fileExt != "json" {
+			return 0, errors.New("неподдерживаемое расширение стикера: допустимы только png, webp, jpg, jpeg, tgs, json")
+		}
 	default:
-		return 0, errors.New("неподдерживаемый тип файла: допустимы только photo и video")
+		return 0, fmt.Errorf("неподдерживаемый тип файла %s: допустимы только photo, video и sticker", upload.FileType)
 	}
 
 	// Проверка MIME-типа на основе содержимого
@@ -91,7 +97,7 @@ func validateMimeType(upload *entity.Upload) error {
 	// Проверяем соответствие MIME-типа заявленному типу файла
 	switch upload.FileType {
 	case "photo":
-		if !strings.HasPrefix(mimeType, "image/jpeg") && !strings.HasPrefix(mimeType, "image/png") {
+		if !strings.HasPrefix(mimeType, "image/jpeg") && !strings.HasPrefix(mimeType, "image/png") && !strings.HasPrefix(mimeType, "image/webp") {
 			return fmt.Errorf("содержимое не соответствует формату фото: обнаружен MIME-тип %s", mimeType)
 		}
 	case "video":
@@ -118,6 +124,7 @@ func (u *Upload) GetUpload(id int) (*entity.Upload, error) {
 		UserID:    intPtr(int(info.UserId)),
 		CreatedAt: parseTime(info.CreatedAt),
 		RawBytes:  reader,
+		Size:      size,
 	}, nil
 }
 
